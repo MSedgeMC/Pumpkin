@@ -578,6 +578,41 @@ mod tests {
     }
 
     #[test]
+    fn serializes_score_with_display_name() {
+        use crate::pumpkin::plugin::java_packets::{CUpdateScore, ClientboundPacket};
+
+        let packet = ClientboundPacket::CUpdateScore(CUpdateScore {
+            entity_name: "Alex".to_string(),
+            objective_name: "kills".to_string(),
+            value: 42,
+            display_name: Some("Alex the Great".to_string()),
+            number_format: None,
+        });
+
+        let mut expected = Vec::new();
+        pumpkin_core::net::java::JavaClient::write_packet_for_version(
+            &pumpkin_protocol::java::client::play::CUpdateScore::new(
+                "Alex".to_string(),
+                "kills".to_string(),
+                VarInt(42),
+                Some(pumpkin_util::text::TextComponent::text(
+                    "Alex the Great".to_string(),
+                )),
+                None,
+            ),
+            JavaMinecraftVersion::V_26_3,
+            &mut expected,
+        )
+        .unwrap();
+
+        assert_eq!(
+            serialize_java_packet(&packet, JavaMinecraftVersion::V_26_3).as_deref(),
+            Some(expected.as_slice()),
+            "send-packet does not serialize c-update-score"
+        );
+    }
+
+    #[test]
     fn converts_negative_destroy_stage_to_wit() {
         let packet = ProtocolCSetBlockDestroyStage {
             entity_id: VarInt(1),

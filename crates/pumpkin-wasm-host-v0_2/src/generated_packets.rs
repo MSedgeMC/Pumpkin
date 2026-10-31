@@ -18,6 +18,24 @@ pub fn serialize_java_packet(
     version: JavaMinecraftVersion,
 ) -> Option<Bytes> {
     match packet {
+        ClientboundPacket::ConfigCConfigAddResourcePack(data) => {
+            let uuid_uuid = uuid::Uuid::from_u64_pair(data.uuid.high, data.uuid.low);
+            let opt_prompt_message = data.prompt_message.clone().map(|v| {
+                let component_prompt_message = pumpkin_util::text::TextComponent::text(v.clone());
+                component_prompt_message
+            });
+            let p = pumpkin_protocol::java::client::config::CConfigAddResourcePack {
+                uuid: &uuid_uuid,
+                url: &data.url,
+                hash: &data.hash,
+                forced: data.forced.try_into().unwrap(),
+                prompt_message: opt_prompt_message,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
         ClientboundPacket::ConfigCCodeOfConduct(data) => {
             let p = pumpkin_protocol::java::client::config::CCodeOfConduct {
                 code_of_conduct: &data.code_of_conduct,
@@ -128,6 +146,24 @@ pub fn serialize_java_packet(
                 pumpkin_util::text::TextComponent::text(data.action_bar.clone());
             let p = pumpkin_protocol::java::client::play::CActionBar {
                 action_bar: &component_action_bar,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
+        ClientboundPacket::CAddResourcePack(data) => {
+            let uuid_uuid = uuid::Uuid::from_u64_pair(data.uuid.high, data.uuid.low);
+            let opt_prompt_message = data.prompt_message.clone().map(|v| {
+                let component_prompt_message = pumpkin_util::text::TextComponent::text(v.clone());
+                component_prompt_message
+            });
+            let p = pumpkin_protocol::java::client::play::CAddResourcePack {
+                uuid: &uuid_uuid,
+                url: &data.url,
+                hash: &data.hash,
+                forced: data.forced.try_into().unwrap(),
+                prompt_message: opt_prompt_message,
             };
             let mut buf = Vec::new();
             pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
@@ -729,6 +765,16 @@ pub fn serialize_java_packet(
                 .unwrap();
             Some(buf.into())
         }
+        ClientboundPacket::CResetScore(data) => {
+            let p = pumpkin_protocol::java::client::play::CResetScore {
+                entity_name: data.entity_name.clone(),
+                objective_name: data.objective_name.clone(),
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
         ClientboundPacket::CSetBorderCenter(data) => {
             let p = pumpkin_protocol::java::client::play::CSetBorderCenter {
                 x: data.x.try_into().unwrap(),
@@ -1049,9 +1095,41 @@ pub fn serialize_java_packet(
                 .unwrap();
             Some(buf.into())
         }
+        ClientboundPacket::CUpdateObjectives(data) => {
+            let component_display_name =
+                pumpkin_util::text::TextComponent::text(data.display_name.clone());
+            let p = pumpkin_protocol::java::client::play::CUpdateObjectives {
+                objective_name: data.objective_name.clone(),
+                mode: data.mode.try_into().unwrap(),
+                display_name: component_display_name,
+                render_type: VarInt(data.render_type),
+                number_format: None,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
         ClientboundPacket::CUpdateRecipes(data) => {
             let p = pumpkin_protocol::java::client::play::CUpdateRecipes {
                 raw_data: &data.raw_data,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
+        ClientboundPacket::CUpdateScore(data) => {
+            let opt_display_name = data.display_name.clone().map(|v| {
+                let component_display_name = pumpkin_util::text::TextComponent::text(v.clone());
+                component_display_name
+            });
+            let p = pumpkin_protocol::java::client::play::CUpdateScore {
+                entity_name: data.entity_name.clone(),
+                objective_name: data.objective_name.clone(),
+                value: VarInt(data.value),
+                display_name: opt_display_name,
+                number_format: None,
             };
             let mut buf = Vec::new();
             pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
@@ -3077,6 +3155,25 @@ pub fn serialize_bedrock_packet(packet: &BClientboundPacket) -> Option<Bytes> {
                 health_percentage: data.health_percentage.try_into().unwrap(),
                 color: data.color.try_into().unwrap(),
                 overlay: data.overlay.try_into().unwrap(),
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::bedrock::BedrockClient::write_raw_packet(&p, &mut buf).unwrap();
+            Some(buf.into())
+        }
+        BClientboundPacket::CChangeDimension(data) => {
+            let opt_loading_screen_id = data
+                .loading_screen_id
+                .clone()
+                .map(|v| v.try_into().unwrap());
+            let p = pumpkin_protocol::bedrock::client::CChangeDimension {
+                dimension_id: VarInt(data.dimension_id),
+                position: pumpkin_util::math::vector3::Vector3::new(
+                    data.position.0 as _,
+                    data.position.1 as _,
+                    data.position.2 as _,
+                ),
+                respawn: data.respawn.try_into().unwrap(),
+                loading_screen_id: opt_loading_screen_id,
             };
             let mut buf = Vec::new();
             pumpkin_core::net::bedrock::BedrockClient::write_raw_packet(&p, &mut buf).unwrap();

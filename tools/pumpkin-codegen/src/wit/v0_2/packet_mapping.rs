@@ -636,6 +636,121 @@ fn parse_packet_file(
     }
 }
 
+/// Protocol types that `utils::map_type` cannot translate, so the WIT record they appear in
+/// carries `common.inexpressible-host-type` and a plugin can only pass the neutral value.
+const HOST_ONLY_TYPES: &[&str] = &["NumberFormat", "Link"];
+
+fn option_payload(ty: &syn::Type) -> Option<&syn::Type> {
+    let syn::Type::Path(tp) = ty else {
+        return None;
+    };
+    let segment = tp.path.segments.last()?;
+    if segment.ident != "Option" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    match args.args.first() {
+        Some(syn::GenericArgument::Type(inner)) => Some(inner),
+        _ => None,
+    }
+}
+
+/// Value a Serialize arm uses for a field the WIT can only express as
+/// `inexpressible-host-type`: the plugin has no way to fill it in, so the packet carries the
+/// neutral value instead.
+fn host_only_default(ty: &syn::Type) -> Option<&'static str> {
+    if let Some(inner) = option_payload(ty) {
+        return HOST_ONLY_TYPES
+            .contains(&get_type_info(inner).0.as_str())
+            .then_some("None");
+    }
+    let (type_ident, _, is_slice) = get_type_info(ty);
+    (is_slice && HOST_ONLY_TYPES.contains(&type_ident.as_str())).then_some("&[]")
+}
+
+/// Payload types whose Serialize conversion builds the protocol field from an owned value.
+/// `Identifier` is missing because it is only built from a `&str`.
+fn is_owned_payload(type_ident: &str) -> bool {
+    matches!(
+        type_ident,
+        "String"
+            | "TextComponent"
+            | "VarInt"
+            | "i32"
+            | "u32"
+            | "i64"
+            | "u64"
+            | "bool"
+            | "f32"
+            | "f64"
+            | "u8"
+            | "i8"
+            | "u16"
+            | "i16"
+    )
+}
+
+/// Serialize-mode conversion of an `Option<T>` field. The WIT record owns its payload, so it
+/// is cloned out of the packet reference and converted inside the closure.
+fn convert_option_value(
+    inner: &syn::Type,
+    src: &str,
+    dst: &str,
+    prep_prefix: &str,
+) -> Option<(String, String)> {
+    let (type_ident, is_ref, is_slice) = get_type_info(inner);
+    if is_ref || is_slice || !is_owned_payload(&type_ident) {
+        return None;
+    }
+    if type_ident == "String" {
+        return Some((String::new(), format!("{}.clone()", src)));
+    }
+    let (prep, expr, ok) = convert_value(
+        &type_ident,
+        is_ref,
+        is_slice,
+        "v",
+        Some(dst),
+        MappingMode::Serialize,
+        prep_prefix,
+    );
+    if !ok {
+        return None;
+    }
+    Some((
+        format!(
+            "{prep_prefix}let opt_{dst} = {src}.clone().map(|v| {{\n{prep}{prep_prefix}    {expr}\n{prep_prefix}}});\n"
+        ),
+        format!("opt_{dst}"),
+    ))
+}
+
+/// Serialize-mode conversion of one record field into the protocol struct field.
+fn convert_serialize_field(
+    ty: &syn::Type,
+    src: &str,
+    dst: &str,
+    prep_prefix: &str,
+) -> (String, String, bool) {
+    if let Some(inner) = option_payload(ty)
+        && let Some((prep, expr)) = convert_option_value(inner, src, dst, prep_prefix)
+    {
+        return (prep, expr, true);
+    }
+    let (type_ident, is_ref, is_slice) = get_type_info(ty);
+    convert_value(
+        &type_ident,
+        is_ref,
+        is_slice,
+        src,
+        Some(dst),
+        MappingMode::Serialize,
+        prep_prefix,
+    )
+}
+
 fn process_struct(
     s: syn::ItemStruct,
     state: &str,
@@ -660,6 +775,9 @@ fn process_struct(
     let mut prep_code = String::new();
     let mut field_inits = String::new();
     let mut possible = true;
+    // Fields whose value the plugin can supply, as opposed to ones the WIT only has as
+    // `inexpressible-host-type`. A record without any of them carries nothing sendable.
+    let mut plugin_fields = 0;
 
     if let Fields::Named(fields) = s.fields {
         for field in fields.named {
@@ -680,6 +798,13 @@ fn process_struct(
                 continue;
             }
 
+            if mode == MappingMode::Serialize
+                && let Some(default) = host_only_default(&field.ty)
+            {
+                field_inits.push_str(&format!("                {}: {},\n", field_name, default));
+                continue;
+            }
+
             if field_name == "type" {
                 field_name = "r#type".to_string();
             }
@@ -692,19 +817,28 @@ fn process_struct(
                 MappingMode::Downcast => String::new(),
             };
 
-            let (prep, expr, ok) = convert_value(
-                &type_ident,
-                is_ref,
-                is_slice,
-                &src,
-                Some(&wit_field),
-                mode,
-                "            ",
-            );
+            let (prep, expr, ok) = match mode {
+                MappingMode::Serialize => {
+                    convert_serialize_field(&field.ty, &src, &wit_field, "            ")
+                }
+                _ => convert_value(
+                    &type_ident,
+                    is_ref,
+                    is_slice,
+                    &src,
+                    Some(&wit_field),
+                    mode,
+                    "            ",
+                ),
+            };
 
             if !ok {
                 possible = false;
                 break;
+            }
+
+            if mode == MappingMode::Serialize {
+                plugin_fields += 1;
             }
 
             prep_code.push_str(&prep);
@@ -717,6 +851,12 @@ fn process_struct(
             field_inits.push_str(&format!("                {}: {},\n", dst_name, expr));
         }
     } else {
+        possible = false;
+    }
+
+    // Sending a packet every field of which a plugin cannot fill in would only clear state
+    // on the client, so such records stay unserializable.
+    if mode == MappingMode::Serialize && plugin_fields == 0 {
         possible = false;
     }
 

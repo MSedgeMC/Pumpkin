@@ -729,6 +729,16 @@ pub fn serialize_java_packet(
                 .unwrap();
             Some(buf.into())
         }
+        ClientboundPacket::CResetScore(data) => {
+            let p = pumpkin_protocol::java::client::play::CResetScore {
+                entity_name: data.entity_name.clone(),
+                objective_name: data.objective_name.clone(),
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
         ClientboundPacket::CSetBorderCenter(data) => {
             let p = pumpkin_protocol::java::client::play::CSetBorderCenter {
                 x: data.x.try_into().unwrap(),
@@ -1049,9 +1059,44 @@ pub fn serialize_java_packet(
                 .unwrap();
             Some(buf.into())
         }
+        ClientboundPacket::CUpdateObjectives(data) => {
+            let component_display_name =
+                pumpkin_util::text::TextComponent::text(data.display_name.clone());
+            let p = pumpkin_protocol::java::client::play::CUpdateObjectives {
+                objective_name: data.objective_name.clone(),
+                mode: data.mode.try_into().unwrap(),
+                display_name: component_display_name,
+                render_type: VarInt(data.render_type),
+                // The v0.1 record exposes this as `option<string>`, which cannot carry a
+                // `NumberFormat`, so the objective is sent with the default format.
+                number_format: None,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
         ClientboundPacket::CUpdateRecipes(data) => {
             let p = pumpkin_protocol::java::client::play::CUpdateRecipes {
                 raw_data: &data.raw_data,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+        }
+        ClientboundPacket::CUpdateScore(data) => {
+            let opt_display_name = data.display_name.clone().map(|v| {
+                let component_display_name = pumpkin_util::text::TextComponent::text(v.clone());
+                component_display_name
+            });
+            let p = pumpkin_protocol::java::client::play::CUpdateScore {
+                entity_name: data.entity_name.clone(),
+                objective_name: data.objective_name.clone(),
+                value: VarInt(data.value),
+                display_name: opt_display_name,
+                // See `CUpdateObjectives`: the v0.1 record cannot carry a `NumberFormat`.
+                number_format: None,
             };
             let mut buf = Vec::new();
             pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
