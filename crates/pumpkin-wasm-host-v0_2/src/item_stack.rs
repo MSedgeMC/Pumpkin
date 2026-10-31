@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use wasmtime::component::{Accessor, HasSelf, Resource};
 
 use super::common::{WitNbtTree, from_wit_nbt_tree, to_wit_nbt_tree};
+use crate::events::to_wasm_identifier;
 use pumpkin_data::Enchantment;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::data_component::DataComponent;
@@ -105,7 +106,7 @@ impl HostItemStackWithStore<PluginHostState> for HasSelf<PluginHostState> {
     ) -> wasmtime::Result<String> {
         let stack = accessor.get_res(&res)?;
         let stack = stack.lock().await;
-        Ok(stack.item.registry_key.to_string())
+        Ok(to_wasm_identifier(stack.item.registry_key))
     }
 
     async fn get_count(

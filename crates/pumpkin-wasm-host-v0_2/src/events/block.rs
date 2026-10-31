@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use crate::{
     events::{
         ToFromWasmEvent, cleanup_event, consume_player, consume_world, from_wasm_block_name,
-        from_wasm_block_position, to_wasm_block_name, to_wasm_block_position,
+        from_wasm_block_position, to_wasm_block_name, to_wasm_block_position, to_wasm_identifier,
     },
     pumpkin::plugin::event::{
         BellResonateEventData, BellRingEventData, BlockBreakEventData, BlockBrushEventData,
@@ -371,7 +371,7 @@ impl ToFromWasmEvent for BlockDispenseEvent {
     fn to_wasm_event(&self, _state: &mut PluginHostState) -> Event {
         Event::BlockDispenseEvent(BlockDispenseEventData {
             block_pos: to_wasm_block_position(self.block_pos),
-            item_name: self.item_name.clone(),
+            item_name: to_wasm_identifier(&self.item_name),
             cancelled: self.cancelled,
         })
     }

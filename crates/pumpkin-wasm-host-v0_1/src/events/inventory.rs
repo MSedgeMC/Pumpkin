@@ -1,5 +1,8 @@
 use crate::{
-    events::{ToFromWasmEvent, consume_player, from_wasm_block_position, to_wasm_block_position},
+    events::{
+        ToFromWasmEvent, consume_player, from_wasm_block_position, to_wasm_block_position,
+        to_wasm_identifier,
+    },
     pumpkin::plugin::event::{
         BrewEventData, BrewingStandFuelEventData, CraftItemEventData, Event, FurnaceBurnEventData,
         FurnaceExtractEventData, FurnaceSmeltEventData, FurnaceStartSmeltEventData,
@@ -100,8 +103,8 @@ impl ToFromWasmEvent for FurnaceSmeltEvent {
     fn to_wasm_event(&self, _state: &mut PluginHostState) -> Event {
         Event::FurnaceSmeltEvent(FurnaceSmeltEventData {
             block_pos: to_wasm_block_position(self.block_pos),
-            source_item: self.source_item.clone(),
-            result_item: self.result_item.clone(),
+            source_item: to_wasm_identifier(&self.source_item),
+            result_item: to_wasm_identifier(&self.result_item),
             cancelled: self.cancelled,
         })
     }
@@ -165,7 +168,7 @@ impl ToFromWasmEvent for FurnaceBurnEvent {
     fn to_wasm_event(&self, _state: &mut PluginHostState) -> Event {
         Event::FurnaceBurnEvent(FurnaceBurnEventData {
             block_pos: to_wasm_block_position(self.block_pos),
-            fuel_item: self.fuel_item.clone(),
+            fuel_item: to_wasm_identifier(&self.fuel_item),
             burn_time: self.burn_time,
             cancelled: self.cancelled,
         })
@@ -193,7 +196,7 @@ impl ToFromWasmEvent for FurnaceExtractEvent {
         Event::FurnaceExtractEvent(FurnaceExtractEventData {
             player,
             block_pos: to_wasm_block_position(self.block_pos),
-            item_id: self.item_id.clone(),
+            item_id: to_wasm_identifier(&self.item_id),
             item_amount: self.item_amount,
             exp_gained: self.exp_gained,
         })
@@ -217,7 +220,7 @@ impl ToFromWasmEvent for FurnaceStartSmeltEvent {
     fn to_wasm_event(&self, _state: &mut PluginHostState) -> Event {
         Event::FurnaceStartSmeltEvent(FurnaceStartSmeltEventData {
             block_pos: to_wasm_block_position(self.block_pos),
-            source_item: self.source_item.clone(),
+            source_item: to_wasm_identifier(&self.source_item),
             cooking_time: self.cooking_time,
             cancelled: self.cancelled,
         })
@@ -266,7 +269,7 @@ impl ToFromWasmEvent for InventoryCreativeEvent {
         Event::InventoryCreativeEvent(InventoryCreativeEventData {
             player,
             slot: self.slot,
-            item_id: self.item_id.clone(),
+            item_id: to_wasm_identifier(&self.item_id),
             item_count: self.item_count,
             cancelled: self.cancelled,
         })
@@ -314,7 +317,7 @@ impl ToFromWasmEvent for InventoryMoveItemEvent {
         Event::InventoryMoveItemEvent(InventoryMoveItemEventData {
             source_pos: to_wasm_block_position(self.source_pos),
             target_pos: to_wasm_block_position(self.target_pos),
-            item_id: self.item_id.clone(),
+            item_id: to_wasm_identifier(&self.item_id),
             item_amount: self.item_amount,
             cancelled: self.cancelled,
         })
@@ -339,7 +342,7 @@ impl ToFromWasmEvent for InventoryPickupItemEvent {
         Event::InventoryPickupItemEvent(InventoryPickupItemEventData {
             block_pos: to_wasm_block_position(self.block_pos),
             item_entity_id: self.item_entity_id,
-            item_id: self.item_id.clone(),
+            item_id: to_wasm_identifier(&self.item_id),
             cancelled: self.cancelled,
         })
     }
@@ -390,7 +393,7 @@ impl ToFromWasmEvent for PrepareGrindstoneEvent {
 
         Event::PrepareGrindstoneEvent(PrepareGrindstoneEventData {
             player,
-            result_item: self.result_item.clone(),
+            result_item: self.result_item.as_deref().map(to_wasm_identifier),
         })
     }
 
@@ -413,7 +416,7 @@ impl ToFromWasmEvent for PrepareInventoryResultEvent {
 
         Event::PrepareInventoryResultEvent(PrepareInventoryResultEventData {
             player,
-            result_item: self.result_item.clone(),
+            result_item: self.result_item.as_deref().map(to_wasm_identifier),
         })
     }
 
@@ -461,7 +464,7 @@ impl ToFromWasmEvent for PrepareSmithingEvent {
 
         Event::PrepareSmithingEvent(PrepareSmithingEventData {
             player,
-            result_item: self.result_item.clone(),
+            result_item: self.result_item.as_deref().map(to_wasm_identifier),
         })
     }
 

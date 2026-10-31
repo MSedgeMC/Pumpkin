@@ -85,8 +85,18 @@ pub(super) const fn from_wasm_block_position(
     BlockPos::new(position.x, position.y, position.z)
 }
 
+/// Event payloads expose registry names in vanilla's namespaced form (`minecraft:stone`); core
+/// fills some of those fields with the bare registry key, so qualify them at the boundary.
+pub(super) fn to_wasm_identifier(name: &str) -> String {
+    if name.contains(':') {
+        name.to_string()
+    } else {
+        format!("minecraft:{name}")
+    }
+}
+
 pub(super) fn to_wasm_block_name(block: &'static Block) -> String {
-    format!("minecraft:{}", block.name)
+    to_wasm_identifier(block.name)
 }
 
 pub(super) fn from_wasm_block_name(block_name: &str) -> &'static Block {
@@ -95,7 +105,7 @@ pub(super) fn from_wasm_block_name(block_name: &str) -> &'static Block {
 }
 
 pub(super) fn to_wasm_entity_type(entity_type: &'static EntityType) -> String {
-    format!("minecraft:{}", entity_type.resource_name)
+    to_wasm_identifier(entity_type.resource_name)
 }
 
 pub(super) fn from_wasm_entity_type(entity_type: &str) -> &'static EntityType {

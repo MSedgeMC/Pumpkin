@@ -4,7 +4,8 @@ use tokio::sync::Mutex;
 use crate::{
     events::{
         ToFromWasmEvent, cleanup_event, consume_player, consume_text_component, consume_world,
-        from_wasm_block_position, from_wasm_position, to_wasm_block_position, to_wasm_position,
+        from_wasm_block_position, from_wasm_position, to_wasm_block_position, to_wasm_identifier,
+        to_wasm_position,
     },
     living_entity::{from_wit_damage_type, to_wit_damage_type},
     pumpkin::plugin::event::{
@@ -500,7 +501,7 @@ impl ToFromWasmEvent
     fn to_wasm_event(&self, _state: &mut PluginHostState) -> Event {
         Event::EntityShootBowEvent(EntityShootBowEventData {
             entity_id: self.entity_id,
-            weapon_name: self.weapon_name.clone(),
+            weapon_name: to_wasm_identifier(&self.weapon_name),
             force: self.force,
             cancelled: self.cancelled,
         })
@@ -695,7 +696,7 @@ impl ToFromWasmEvent for CreatureSpawnEvent {
         });
         Event::CreatureSpawnEvent(CreatureSpawnEventData {
             entity_id: self.entity_id,
-            entity_type: self.entity_type.clone(),
+            entity_type: to_wasm_identifier(&self.entity_type),
             position: to_wasm_position(self.position),
             target_world,
             spawn_reason: self.spawn_reason.clone(),
@@ -791,7 +792,7 @@ impl ToFromWasmEvent for EntityChangeBlockEvent {
         Event::EntityChangeBlockEvent(EntityChangeBlockEventData {
             entity_id: self.entity_id,
             block_pos: to_wasm_block_position(self.block_pos),
-            new_block: self.new_block.clone(),
+            new_block: to_wasm_identifier(&self.new_block),
             cancelled: self.cancelled,
         })
     }
@@ -887,7 +888,7 @@ impl ToFromWasmEvent for EntityDropItemEvent {
     fn to_wasm_event(&self, _state: &mut PluginHostState) -> Event {
         Event::EntityDropItemEvent(EntityDropItemEventData {
             entity_id: self.entity_id,
-            item_name: self.item_name.clone(),
+            item_name: to_wasm_identifier(&self.item_name),
             count: self.count,
             cancelled: self.cancelled,
         })
@@ -1034,7 +1035,7 @@ impl ToFromWasmEvent for EntityPlaceEvent {
         Event::EntityPlaceEvent(EntityPlaceEventData {
             entity_id: self.entity_id,
             block_pos: to_wasm_block_position(self.block_pos),
-            block_name: self.block_name.clone(),
+            block_name: to_wasm_identifier(&self.block_name),
             cancelled: self.cancelled,
         })
     }
@@ -1378,7 +1379,7 @@ impl ToFromWasmEvent for ItemSpawnEvent {
         Event::ItemSpawnEvent(ItemSpawnEventData {
             entity_id: self.entity_id,
             position: to_wasm_position(self.position),
-            item_name: self.item_name.clone(),
+            item_name: to_wasm_identifier(&self.item_name),
             cancelled: self.cancelled,
         })
     }
@@ -2164,7 +2165,7 @@ impl ToFromWasmEvent for LingeringPotionSplashEvent {
         Event::LingeringPotionSplashEvent(LingeringPotionSplashEventData {
             entity_id: self.entity_id,
             location: to_wasm_block_position(self.location),
-            potion_item: self.potion_item.clone(),
+            potion_item: to_wasm_identifier(&self.potion_item),
             cancelled: self.cancelled,
         })
     }
@@ -2255,7 +2256,7 @@ impl ToFromWasmEvent for PotionSplashEvent {
         Event::PotionSplashEvent(PotionSplashEventData {
             entity_id: self.entity_id,
             location: to_wasm_block_position(self.location),
-            potion_item: self.potion_item.clone(),
+            potion_item: to_wasm_identifier(&self.potion_item),
             affected_entities: self.affected_entities.clone(),
             cancelled: self.cancelled,
         })

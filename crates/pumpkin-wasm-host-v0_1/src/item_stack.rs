@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use wasmtime::component::Resource;
 
 use super::common::{WitNbtTree, from_wit_nbt_tree, to_wit_nbt_tree};
+use crate::events::to_wasm_identifier;
 use pumpkin_data::Enchantment;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::data_component::DataComponent;
@@ -96,7 +97,7 @@ impl HostItemStack for PluginHostState {
     ) -> wasmtime::Result<String> {
         let stack = self.get(&res)?;
         let stack = stack.lock().await;
-        Ok(stack.item.registry_key.to_string())
+        Ok(to_wasm_identifier(stack.item.registry_key))
     }
 
     async fn get_count(&mut self, res: Resource<ItemStackHandle>) -> wasmtime::Result<u8> {
@@ -685,5 +686,26 @@ impl HostItemStack for PluginHostState {
 
     fn drop(&mut self, rep: Resource<ItemStackHandle>) -> wasmtime::Result<()> {
         self.drop(rep)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pumpkin_data::item::Item;
+
+    #[tokio::test]
+    async fn registry_key_is_the_namespaced_identifier_the_sdk_expects() {
+        let mut state = PluginHostState::new();
+        let stack = state
+            .new(Item::FLINT_AND_STEEL.registry_key.to_string(), 1)
+            .expect("add item stack");
+        assert_eq!(
+            state
+                .get_registry_key(stack)
+                .await
+                .expect("item registry key"),
+            "minecraft:flint_and_steel"
+        );
     }
 }
