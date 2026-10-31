@@ -71,16 +71,26 @@ impl ScoreboardTarget for std::sync::Arc<World> {
     }
 }
 
+/// Per-player scoreboard updates go straight to the owning client, unless that
+/// client is still waiting for its initial scoreboard state.
 impl ScoreboardTarget for Player {
     fn send_editioned<J: ClientPacket + Sync, B: BClientPacket + Sync>(
         &self,
         je_packet: &J,
         be_packet: &B,
     ) {
+        if self.defers_scoreboard_updates() {
+            // Only stored: it is part of the initial state send, see
+            // `Player::defers_scoreboard_updates`.
+            return;
+        }
         self.try_enqueue_packet_editioned(je_packet, be_packet);
     }
 
     fn send_je<J: ClientPacket + Sync>(&self, je_packet: &J) {
+        if self.defers_scoreboard_updates() {
+            return;
+        }
         self.try_send_client_packet(je_packet);
     }
 }
@@ -91,10 +101,18 @@ impl ScoreboardTarget for std::sync::Arc<Player> {
         je_packet: &J,
         be_packet: &B,
     ) {
+        if self.defers_scoreboard_updates() {
+            // Only stored: it is part of the initial state send, see
+            // `Player::defers_scoreboard_updates`.
+            return;
+        }
         self.try_enqueue_packet_editioned(je_packet, be_packet);
     }
 
     fn send_je<J: ClientPacket + Sync>(&self, je_packet: &J) {
+        if self.defers_scoreboard_updates() {
+            return;
+        }
         self.try_send_client_packet(je_packet);
     }
 }

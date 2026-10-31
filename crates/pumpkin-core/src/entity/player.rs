@@ -98,7 +98,9 @@ impl JavaPlayer<'_> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             scoreboard.map(CustomScoreboard::Java);
-        self.0.send_scoreboard();
+        if !self.0.defers_scoreboard_updates() {
+            self.0.send_scoreboard();
+        }
     }
 
     pub fn reset_scoreboard(&self) {
@@ -138,7 +140,9 @@ impl BedrockPlayer<'_> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             scoreboard.map(CustomScoreboard::Bedrock);
-        self.0.send_scoreboard();
+        if !self.0.defers_scoreboard_updates() {
+            self.0.send_scoreboard();
+        }
     }
 
     pub fn reset_scoreboard(&self) {
@@ -407,6 +411,22 @@ pub enum SpamType {
 /// Center chunk and levels of the view and simulation tickets a player holds.
 pub type HeldChunkTickets = (Vector2<i32>, Option<i8>, Option<i8>);
 
+/// Whether scoreboard packets for a client have to wait for the initial state send.
+///
+/// Vanilla sends the complete scoreboard state once per joining client
+/// (`PlayerList#updateEntireScoreboard`) and only starts sending incremental
+/// scoreboard packets afterwards, because the player is added to the broadcast
+/// recipients after that call. A client rejects an objective it already knows
+/// ("An objective with the name ... already exists!"), so an update that races
+/// with the join would disconnect it.
+///
+/// Bedrock receives its per-player scoreboard packets one by one (there is no
+/// state send on join), so its updates are never deferred.
+#[must_use]
+const fn scoreboard_updates_deferred(client_is_java: bool, state_sent: bool) -> bool {
+    client_is_java && !state_sent
+}
+
 #[repr(C)]
 pub struct Player {
     /// The underlying living entity object that represents the player.
@@ -535,6 +555,9 @@ pub struct Player {
     pub per_player_time: AtomicCell<Option<(u64, bool)>>,
     pub per_player_weather: AtomicCell<Option<PlayerWeather>>,
     pub custom_scoreboard: std::sync::Mutex<Option<CustomScoreboard>>,
+    /// Whether this client already received the complete scoreboard state, see
+    /// `scoreboard_updates_deferred`.
+    pub scoreboard_state_sent: AtomicBool,
     pub compass_target: AtomicCell<Option<pumpkin_util::math::position::BlockPos>>,
     pub respawn_location: AtomicCell<Option<pumpkin_util::math::position::BlockPos>>,
     pub hidden_players: Mutex<std::collections::HashSet<uuid::Uuid>>,
@@ -868,6 +891,7 @@ impl Player {
             per_player_time: AtomicCell::new(None),
             per_player_weather: AtomicCell::new(None),
             custom_scoreboard: std::sync::Mutex::new(None),
+            scoreboard_state_sent: AtomicBool::new(false),
             compass_target: AtomicCell::new(None),
             respawn_location: AtomicCell::new(None),
             hidden_players: Mutex::new(std::collections::HashSet::new()),
@@ -3941,14 +3965,31 @@ impl Player {
         matches!(self.client.as_ref(), ClientPlatform::Bedrock(_)).then(|| BedrockPlayer(self))
     }
 
+    /// Whether scoreboard packets for this player have to wait for the initial
+    /// scoreboard state send, see `scoreboard_updates_deferred`.
+    #[must_use]
+    pub fn defers_scoreboard_updates(&self) -> bool {
+        scoreboard_updates_deferred(
+            matches!(self.client.as_ref(), ClientPlatform::Java(_)),
+            self.scoreboard_state_sent.load(Ordering::Acquire),
+        )
+    }
+
     pub fn reset_scoreboard(&self) {
         *self
             .custom_scoreboard
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        self.send_scoreboard();
+        if !self.defers_scoreboard_updates() {
+            self.send_scoreboard();
+        }
     }
 
+    /// Sends the complete scoreboard state to this client.
+    ///
+    /// This is the state vanilla sends once per joining client
+    /// (`PlayerList#updateEntireScoreboard`); incremental scoreboard packets are
+    /// only sent to the client from then on.
     pub fn send_scoreboard(&self) {
         let guard = self
             .custom_scoreboard
@@ -3974,6 +4015,7 @@ impl Player {
                     .send_to_player(self);
             }
         }
+        self.scoreboard_state_sent.store(true, Ordering::Release);
     }
 
     pub fn get_team(&self) -> Option<crate::world::scoreboard::Team> {
@@ -8468,6 +8510,19 @@ mod tests {
     use super::{bedrock_inventory_slot, read_root_vehicle, write_root_vehicle};
     use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
     use uuid::Uuid;
+
+    /// The join state send is the only scoreboard source for a joining Java
+    /// client; updates racing with it must not be sent twice.
+    #[test]
+    fn scoreboard_updates_wait_for_the_initial_state() {
+        use super::scoreboard_updates_deferred;
+
+        assert!(scoreboard_updates_deferred(true, false));
+        assert!(!scoreboard_updates_deferred(true, true));
+        // Bedrock gets no state send on join, so its updates are never deferred.
+        assert!(!scoreboard_updates_deferred(false, false));
+        assert!(!scoreboard_updates_deferred(false, true));
+    }
 
     #[test]
     fn player_screen_slots_map_to_bedrock_inventory() {
