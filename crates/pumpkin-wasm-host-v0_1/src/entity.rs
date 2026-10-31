@@ -389,7 +389,8 @@ impl HostEntity for PluginHostState {
             Vector3::new(pos.x + x, pos.y + y, pos.z + z),
         );
         let world = entity.get_entity().world.load_full();
-        let entities = world.get_entities_at_box(&box_range);
+        // `get_entities_at_box` skips players, which are only in `World::players`.
+        let entities = world.get_all_at_box(&box_range);
 
         let mut result = Vec::new();
         for e in entities {
