@@ -201,32 +201,24 @@ fn current_mob_entity(mob: &dyn InternalMob) -> Option<Arc<dyn pumpkin_core::ent
 
 #[derive(Clone, Copy)]
 enum GoalCall {
+    CanStart,
+    ShouldContinue,
     Start,
     Tick,
     Stop,
 }
 
 impl CustomWasmGoal {
-    fn invoke(&self, mob: &dyn InternalMob, call: GoalCall) {
-        let Some(entity) = current_mob_entity(mob) else {
-            return;
-        };
+    /// Runs one goal callback in the guest and returns its answer for the two predicates.
+    fn invoke(&self, mob: &dyn InternalMob, call: GoalCall) -> Option<bool> {
+        let entity = current_mob_entity(mob)?;
         let world = entity.get_entity().world.load();
-        let Some(server) = world.server.upgrade() else {
-            return;
-        };
+        let server = world.server.upgrade()?;
         let plugin = self.plugin.clone();
+        let call_plugin = plugin.clone();
         let goal_id = self.goal_id;
         let run = async move {
-            let function = {
-                let instance = plugin.instance::<crate::Plugin>();
-                match call {
-                    GoalCall::Start => instance.func_handle_ai_goal_start(),
-                    GoalCall::Tick => instance.func_handle_ai_goal_tick(),
-                    GoalCall::Stop => instance.func_handle_ai_goal_stop(),
-                }
-            };
-            if let Err(error) = plugin
+            let answer = plugin
                 .store
                 .call_guest(move |mut guest| {
                     Box::pin(async move {
@@ -247,32 +239,57 @@ impl CustomWasmGoal {
                             };
                             Ok::<_, wasmtime::Error>((server_resource, entity_resource))
                         })?;
-                        guest
-                            .call(function, (goal_id, server_resource, entity_resource))
-                            .await
+                        let instance = call_plugin.instance::<crate::Plugin>();
+                        let params = (goal_id, server_resource, entity_resource);
+                        match call {
+                            GoalCall::CanStart => guest
+                                .call(instance.func_handle_ai_goal_can_start(), params)
+                                .await
+                                .map(|(answer,)| Some(answer)),
+                            GoalCall::ShouldContinue => guest
+                                .call(instance.func_handle_ai_goal_should_continue(), params)
+                                .await
+                                .map(|(answer,)| Some(answer)),
+                            GoalCall::Start => guest
+                                .call(instance.func_handle_ai_goal_start(), params)
+                                .await
+                                .map(|()| None),
+                            GoalCall::Tick => guest
+                                .call(instance.func_handle_ai_goal_tick(), params)
+                                .await
+                                .map(|()| None),
+                            GoalCall::Stop => guest
+                                .call(instance.func_handle_ai_goal_stop(), params)
+                                .await
+                                .map(|()| None),
+                        }
                     })
                 })
-                .await
-            {
-                tracing::error!(goal_id, %error, "Wasm AI goal callback failed");
+                .await;
+            match answer {
+                Ok(answer) => answer,
+                Err(error) => {
+                    tracing::error!(goal_id, %error, "Wasm AI goal callback failed");
+                    None
+                }
             }
         };
 
         if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| server.runtime.block_on(run));
+            tokio::task::block_in_place(|| server.runtime.block_on(run))
         } else {
-            server.runtime.block_on(run);
+            server.runtime.block_on(run)
         }
     }
 }
 
 impl Goal for CustomWasmGoal {
-    fn can_start(&mut self, _mob: &dyn InternalMob) -> bool {
-        false
+    fn can_start(&mut self, mob: &dyn InternalMob) -> bool {
+        self.invoke(mob, GoalCall::CanStart) == Some(true)
     }
 
-    fn should_continue(&mut self, _mob: &dyn InternalMob) -> bool {
-        false
+    fn should_continue(&mut self, mob: &dyn InternalMob) -> bool {
+        self.invoke(mob, GoalCall::ShouldContinue) == Some(true)
     }
 
     fn start(&mut self, mob: &dyn InternalMob) {

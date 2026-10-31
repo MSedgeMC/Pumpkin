@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 
 /// Represents a custom entity AI goal for mobs.
 ///
+/// Register an implementation with [`register_ai_goal`]; the mob's own AI tick then drives it, so
+/// the goal needs no scheduler of its own.
+///
 /// Goal callbacks use shared references so they can be re-entered. Mutable goal state must use
 /// thread-safe interior mutability.
 #[allow(unused_variables)]
@@ -50,4 +53,20 @@ impl LazyAiGoalHandlers {
     pub fn get(&self, id: u32) -> Option<Arc<dyn AiGoal>> {
         self.handlers.get(&id).map(Arc::clone)
     }
+}
+
+/// Registers a custom AI goal and returns the id to pass to a mob's `add_custom_ai_goal`.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let goal_id = ai::register_ai_goal(MyGoal);
+/// mob.add_custom_ai_goal(3, goal_id);
+/// ```
+#[must_use]
+pub fn register_ai_goal<G: AiGoal + 'static>(goal: G) -> u32 {
+    AI_GOAL_HANDLERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(Box::new(goal))
 }
