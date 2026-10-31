@@ -1,5 +1,7 @@
 use colored::{ColoredString, Colorize};
+use serde::de::{IgnoredAny, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 
 /// Text color for chat components.
 ///
@@ -249,7 +251,7 @@ impl Serialize for RGBColor {
 /// An ARGB color with alpha, red, green, and blue components.
 ///
 /// Used for advanced color effects like custom text shadows.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub struct ARGBColor {
     /// The alpha (transparency) component (0-255).
     pub alpha: u8,
@@ -259,6 +261,64 @@ pub struct ARGBColor {
     pub green: u8,
     /// The blue component (0-255).
     pub blue: u8,
+}
+
+/// `ARGB.as8BitChannel` (`ARGB.java:337`): `floor(value * 255)`. `ARGB.color`
+/// keeps the low byte of each channel, so out-of-range floats wrap.
+fn as_8_bit_channel(value: f32) -> u8 {
+    ((value * 255.0) as i32 & 0xFF) as u8
+}
+
+impl<'de> Deserialize<'de> for ARGBColor {
+    /// Vanilla reads `shadow_color` as an ARGB int or as four floats in
+    /// `[red, green, blue, alpha]` order (`ExtraCodecs.java:141`).
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        const EXPECTED_CHANNELS: &str = "expected [red, green, blue, alpha]";
+
+        struct ARGBColorVisitor;
+
+        impl<'de> Visitor<'de> for ARGBColorVisitor {
+            type Value = ARGBColor;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an ARGB color as an int or as [red, green, blue, alpha]")
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(ARGBColor::from_argb_int)
+                    .map_err(|_| E::custom("ARGB color does not fit in an int"))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(ARGBColor::from_argb_int)
+                    .map_err(|_| E::custom("ARGB color does not fit in an int"))
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut channels = [0.0_f32; 4];
+                for channel in &mut channels {
+                    *channel = seq
+                        .next_element::<f32>()?
+                        .ok_or_else(|| serde::de::Error::custom(EXPECTED_CHANNELS))?;
+                }
+                if seq.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::custom(EXPECTED_CHANNELS));
+                }
+
+                let [red, green, blue, alpha] = channels;
+                Ok(ARGBColor::new(
+                    as_8_bit_channel(alpha),
+                    as_8_bit_channel(red),
+                    as_8_bit_channel(green),
+                    as_8_bit_channel(blue),
+                ))
+            }
+        }
+
+        deserializer.deserialize_any(ARGBColorVisitor)
+    }
 }
 
 impl ARGBColor {
@@ -319,8 +379,9 @@ impl ARGBColor {
 }
 
 impl Serialize for ARGBColor {
+    /// The int form, which is the one vanilla writes (`ExtraCodecs.java:141`).
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes([self.alpha, self.red, self.green, self.blue].as_ref())
+        serializer.serialize_i32(self.to_argb_int())
     }
 }
 
