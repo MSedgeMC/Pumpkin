@@ -92,6 +92,7 @@ impl WindChargeEntity {
             WindChargeKind::Breeze => (3.0, BREEZE_WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR.clone()),
         };
         self.get_entity().world.load().explode_with_calculator(
+            Some(self.get_entity()),
             position,
             power,
             crate::world::ExplosionInteraction::Trigger,

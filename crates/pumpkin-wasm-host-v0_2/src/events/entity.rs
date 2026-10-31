@@ -383,6 +383,12 @@ impl ToFromWasmEvent
             entity_id: self.entity_id,
             position: to_wasm_position(self.position),
             yield_rate: self.yield_rate,
+            blocks: self
+                .blocks
+                .iter()
+                .copied()
+                .map(to_wasm_block_position)
+                .collect(),
             cancelled: self.cancelled,
         })
     }
@@ -397,6 +403,11 @@ impl ToFromWasmEvent
                     data.position.2,
                 ),
                 yield_rate: data.yield_rate,
+                blocks: data
+                    .blocks
+                    .into_iter()
+                    .map(from_wasm_block_position)
+                    .collect(),
                 cancelled: data.cancelled,
             },
             _ => panic!("unexpected event type"),

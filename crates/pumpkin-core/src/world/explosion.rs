@@ -14,6 +14,9 @@ use rustc_hash::FxHashMap;
 use crate::{
     block::{ExplodeArgs, drop_loot},
     entity::{Entity, EntityBase},
+    plugin::api::events::{
+        block::block_explode::BlockExplodeEvent, entity::entity_explode::EntityExplodeEvent,
+    },
     world::loot::LootContextParameters,
 };
 
@@ -190,17 +193,26 @@ pub struct Explosion {
     block_interaction: BlockInteraction,
     damage_calculator: Option<Arc<dyn ExplosionDamageCalculator>>,
     preserve_rails: bool,
+    /// Vanilla `ServerExplosion.source`: the entity that caused this explosion. It picks
+    /// which event the explosion reports as, like vanilla's `source == null` branches.
+    source_entity_id: Option<i32>,
 }
 
 impl Explosion {
     #[must_use]
-    pub const fn new(power: f32, pos: Vector3<f64>, block_interaction: BlockInteraction) -> Self {
+    pub const fn new(
+        power: f32,
+        pos: Vector3<f64>,
+        block_interaction: BlockInteraction,
+        source_entity_id: Option<i32>,
+    ) -> Self {
         Self {
             power,
             pos,
             block_interaction,
             damage_calculator: None,
             preserve_rails: false,
+            source_entity_id,
         }
     }
 
@@ -496,15 +508,61 @@ impl Explosion {
         visible_points as f32 / total_points as f32
     }
 
-    /// Returns the removed block count
-    pub fn explode(&self, world: &Arc<World>) -> u32 {
+    /// The drop chance vanilla's `ExplosionCondition` applies to the destroyed blocks:
+    /// every block without decay, one in `1 / radius` with it.
+    fn yield_rate(&self) -> f32 {
+        if self.block_interaction == BlockInteraction::DestroyWithDecay && self.power > 0.0 {
+            1.0 / self.power
+        } else {
+            1.0
+        }
+    }
+
+    /// Fires the one event this explosion reports: `EntityExplodeEvent` when an entity
+    /// caused it, `BlockExplodeEvent` otherwise. Vanilla destroys blocks from the single
+    /// list it computed (`ServerExplosion.interactWithBlocks`), so handlers edit that list.
+    /// Returns the list they left behind, or `None` when the explosion was cancelled.
+    fn fire_explode_event(
+        &self,
+        world: &Arc<World>,
+        blocks: Vec<BlockPos>,
+    ) -> Option<Vec<BlockPos>> {
+        let Some(server) = world.server.upgrade() else {
+            return Some(blocks);
+        };
+        let yield_rate = self.yield_rate();
+        if let Some(entity_id) = self.source_entity_id {
+            let mut event = EntityExplodeEvent::new(entity_id, self.pos, yield_rate, blocks);
+            server.plugin_manager.fire_blocking(&server, &mut event);
+            (!event.cancelled).then_some(event.blocks)
+        } else {
+            let center_pos = BlockPos::floored(self.pos.x, self.pos.y, self.pos.z);
+            let mut event = BlockExplodeEvent::new(center_pos, yield_rate, blocks);
+            server.plugin_manager.fire_blocking(&server, &mut event);
+            (!event.cancelled).then_some(event.blocks)
+        }
+    }
+
+    /// Returns the removed block count, or `None` when a plugin cancelled the explosion.
+    pub fn explode(&self, world: &Arc<World>) -> Option<u32> {
+        // Vanilla `ServerExplosion.explode` (ServerExplosion.java:236) builds the block list
+        // before it hurts entities and then reuses that list for every block it touches.
+        let blocks = if self.block_interaction == BlockInteraction::Keep {
+            FxHashMap::default()
+        } else {
+            self.get_blocks_to_destroy(world)
+        };
+        let block_list = self.fire_explode_event(world, blocks.keys().copied().collect())?;
+
         self.damage_entities(world);
 
         match self.block_interaction {
-            BlockInteraction::Keep => 0,
+            BlockInteraction::Keep => Some(0),
             BlockInteraction::TriggerBlock => {
-                let blocks = self.get_blocks_to_destroy(world);
-                for (pos, (block, _state)) in &blocks {
+                for pos in &block_list {
+                    let Some(&(block, _state)) = blocks.get(pos) else {
+                        continue;
+                    };
                     let pumpkin_block = world.block_registry.get_pumpkin_block(block.id);
                     if let Some(pumpkin_block) = pumpkin_block {
                         pumpkin_block.explode(ExplodeArgs {
@@ -514,31 +572,18 @@ impl Explosion {
                         });
                     }
                 }
-                0
+                Some(0)
             }
             BlockInteraction::Destroy | BlockInteraction::DestroyWithDecay => {
-                let center_pos = BlockPos::floored(self.pos.x, self.pos.y, self.pos.z);
-                let mut event =
-                    crate::plugin::api::events::block::block_explode::BlockExplodeEvent::new(
-                        center_pos,
-                        if self.power > 0.0 {
-                            1.0 / self.power
-                        } else {
-                            1.0
-                        },
-                    );
-                if let Some(server) = world.server.upgrade() {
-                    server.plugin_manager.fire_blocking(&server, &mut event);
-                }
-                if event.cancelled {
-                    return 0;
-                }
-
-                let blocks = self.get_blocks_to_destroy(world);
                 let decay_drops = self.block_interaction == BlockInteraction::DestroyWithDecay;
                 let explosion_radius = decay_drops.then_some(self.power);
+                let mut removed = 0;
 
-                for (pos, (block, state)) in &blocks {
+                for pos in &block_list {
+                    let Some(&(block, state)) = blocks.get(pos) else {
+                        continue;
+                    };
+                    removed += 1;
                     let pumpkin_block = world.block_registry.get_pumpkin_block(block.id);
 
                     if pumpkin_block.is_none_or(|s| s.should_drop_items_on_explosion()) {
@@ -572,7 +617,7 @@ impl Explosion {
                     }
                 }
                 // TODO: fire
-                blocks.len() as u32
+                Some(removed)
             }
         }
     }

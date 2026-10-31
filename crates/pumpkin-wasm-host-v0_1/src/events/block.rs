@@ -393,6 +393,12 @@ impl ToFromWasmEvent for BlockExplodeEvent {
         Event::BlockExplodeEvent(BlockExplodeEventData {
             block_pos: to_wasm_block_position(self.block_pos),
             yield_rate: self.yield_rate,
+            blocks: self
+                .blocks
+                .iter()
+                .copied()
+                .map(to_wasm_block_position)
+                .collect(),
             cancelled: self.cancelled,
         })
     }
@@ -402,6 +408,11 @@ impl ToFromWasmEvent for BlockExplodeEvent {
             Event::BlockExplodeEvent(data) => Self {
                 block_pos: from_wasm_block_position(data.block_pos),
                 yield_rate: data.yield_rate,
+                blocks: data
+                    .blocks
+                    .into_iter()
+                    .map(from_wasm_block_position)
+                    .collect(),
                 cancelled: data.cancelled,
             },
             _ => panic!("unexpected event type"),

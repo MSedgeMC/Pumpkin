@@ -480,6 +480,7 @@ interface event {
         entity-id: s32,
         position: position,
         yield-rate: f32,
+        blocks: list<block-pos>,
         cancelled: bool
     }
 
@@ -1330,6 +1331,7 @@ interface event {
     record block-explode-event-data {
         block-pos: block-pos,
         yield-rate: f32,
+        blocks: list<block-pos>,
         cancelled: bool
     }
 
