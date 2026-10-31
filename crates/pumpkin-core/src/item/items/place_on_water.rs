@@ -73,9 +73,19 @@ impl ItemBehaviour for PlaceOnWaterBlockItem {
         let hit_block = world.get_block(&hit_pos);
         let hit_fluid = world.get_fluid(&hit_pos);
         let can_support = if item.id == Item::LILY_PAD.id {
-            hit_fluid.has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_LILY_PAD)
-                || hit_block.has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_LILY_PAD)
-                || hit_block.has_tag(&tag::Block::MINECRAFT_SUPPORTS_LILY_PAD)
+            // Vanilla places lily pads through `BlockItem.place` -> `canSurvive` ->
+            // `LilyPadBlock.mayPlaceOn`, so the support rule belongs to the block.
+            world.block_registry.can_place_at(
+                None,
+                Some(world.as_ref()),
+                world.as_ref(),
+                Some(player),
+                &Block::LILY_PAD,
+                Block::LILY_PAD.default_state,
+                &above_pos,
+                None,
+                None,
+            )
         } else {
             hit_fluid.has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_FROGSPAWN)
                 || hit_block.has_tag(&tag::Block::MINECRAFT_SUPPORTS_FROGSPAWN)
