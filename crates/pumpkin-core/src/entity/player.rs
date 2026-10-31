@@ -398,6 +398,34 @@ pub enum PlayerWeather {
     Downfall,
 }
 
+impl PlayerWeather {
+    /// Whether a client with this override renders rain, i.e. whether it gets
+    /// `BeginRaining` instead of `EndRaining`.
+    #[must_use]
+    pub const fn raining(self) -> bool {
+        matches!(self, Self::Downfall)
+    }
+
+    /// The `RainLevelChange` value a client with this override should get.
+    #[must_use]
+    pub const fn rain_level(self) -> f32 {
+        match self {
+            Self::Clear => 0.0,
+            Self::Downfall => 1.0,
+        }
+    }
+
+    /// The `ThunderLevelChange` value a client with this override should get.
+    /// Thunder is not part of the override, so it keeps following the world.
+    #[must_use]
+    pub const fn thunder_level(self, world_thunder_level: f32) -> f32 {
+        match self {
+            Self::Clear => 0.0,
+            Self::Downfall => world_thunder_level,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpamType {
     Chat,
@@ -3852,12 +3880,71 @@ impl Player {
         self.per_player_time.load().is_none_or(|(_, r)| r)
     }
 
+    /// Sends the weather this player should see right now: their per-player
+    /// weather if one is set, otherwise the world's current weather.
+    pub fn send_weather(&self, world: &World) {
+        let (raining, rain_level, thunder_level) = {
+            let weather = world
+                .weather
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (weather.raining, weather.rain_level, weather.thunder_level)
+        };
+
+        self.send_weather_rain_state(raining);
+        self.send_weather_rain_level(rain_level);
+        self.send_weather_thunder_level(thunder_level);
+    }
+
+    /// Sends the rain start/stop event this player should see. A per-player
+    /// weather override wins over the world's rain state, so world weather
+    /// changes cannot clobber it.
+    pub fn send_weather_rain_state(&self, world_raining: bool) {
+        let raining = self
+            .per_player_weather
+            .load()
+            .map_or(world_raining, PlayerWeather::raining);
+        let event = if raining {
+            GameEvent::BeginRaining
+        } else {
+            GameEvent::EndRaining
+        };
+
+        self.send_game_event(event, 0.0);
+    }
+
+    /// Sends the rain strength this player should see.
+    pub fn send_weather_rain_level(&self, world_rain_level: f32) {
+        let rain_level = self
+            .per_player_weather
+            .load()
+            .map_or(world_rain_level, PlayerWeather::rain_level);
+
+        self.send_game_event(GameEvent::RainLevelChange, rain_level);
+    }
+
+    /// Sends the thunder strength this player should see.
+    pub fn send_weather_thunder_level(&self, world_thunder_level: f32) {
+        let thunder_level = self
+            .per_player_weather
+            .load()
+            .map_or(world_thunder_level, |weather| {
+                weather.thunder_level(world_thunder_level)
+            });
+
+        self.send_game_event(GameEvent::ThunderLevelChange, thunder_level);
+    }
+
     pub fn set_player_weather(&self, weather: PlayerWeather) {
+        let world = self.world();
         self.per_player_weather.store(Some(weather));
+        self.send_weather(&world);
     }
 
     pub fn reset_player_weather(&self) {
+        let world = self.world();
         self.per_player_weather.store(None);
+        self.send_weather(&world);
     }
 
     pub fn get_player_weather(&self) -> Option<PlayerWeather> {
@@ -8468,6 +8555,19 @@ mod tests {
     use super::{bedrock_inventory_slot, read_root_vehicle, write_root_vehicle};
     use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
     use uuid::Uuid;
+
+    #[test]
+    fn player_weather_override_wins_over_world_weather() {
+        use super::PlayerWeather;
+
+        assert!(!PlayerWeather::Clear.raining());
+        assert!(PlayerWeather::Downfall.raining());
+        assert_eq!(PlayerWeather::Clear.rain_level(), 0.0);
+        assert_eq!(PlayerWeather::Downfall.rain_level(), 1.0);
+        // Thunder is not part of the override, so it keeps the world's level.
+        assert_eq!(PlayerWeather::Clear.thunder_level(0.7), 0.0);
+        assert_eq!(PlayerWeather::Downfall.thunder_level(0.7), 0.7);
+    }
 
     #[test]
     fn player_screen_slots_map_to_bedrock_inventory() {

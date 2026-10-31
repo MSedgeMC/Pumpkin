@@ -1,5 +1,4 @@
 use super::World;
-use pumpkin_protocol::java::client::play::{CGameEvent, GameEvent};
 use rand::RngExt;
 
 // Weather timing constants
@@ -69,11 +68,7 @@ impl Weather {
         self.thundering = thundering;
 
         if was_raining != raining {
-            if was_raining {
-                world.broadcast_packet_all(&CGameEvent::new(GameEvent::EndRaining, 0.0));
-            } else {
-                world.broadcast_packet_all(&CGameEvent::new(GameEvent::BeginRaining, 0.0));
-            }
+            world.broadcast_weather_rain_state(raining);
         }
     }
 
@@ -100,17 +95,11 @@ impl Weather {
 
         // Broadcast level changes if needed
         if (self.old_rain_level - self.rain_level).abs() > f32::EPSILON {
-            world.broadcast_packet_all(&CGameEvent::new(
-                GameEvent::RainLevelChange,
-                self.rain_level,
-            ));
+            world.broadcast_weather_rain_level(self.rain_level);
         }
 
         if (self.old_thunder_level - self.thunder_level).abs() > f32::EPSILON {
-            world.broadcast_packet_all(&CGameEvent::new(
-                GameEvent::ThunderLevelChange,
-                self.thunder_level,
-            ));
+            world.broadcast_weather_thunder_level(self.thunder_level);
         }
     }
 

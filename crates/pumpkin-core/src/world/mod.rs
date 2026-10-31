@@ -1059,6 +1059,28 @@ impl World {
         Self::broadcast_java_grouped(packet, recipients_by_version);
     }
 
+    /// Broadcasts the rain start/stop event, sending each player the rain state
+    /// they should see instead of clobbering a per-player weather override.
+    pub fn broadcast_weather_rain_state(&self, raining: bool) {
+        for player in self.players.load().iter() {
+            player.send_weather_rain_state(raining);
+        }
+    }
+
+    /// Broadcasts the rain strength, using per-player weather overrides where set.
+    pub fn broadcast_weather_rain_level(&self, rain_level: f32) {
+        for player in self.players.load().iter() {
+            player.send_weather_rain_level(rain_level);
+        }
+    }
+
+    /// Broadcasts the thunder strength, using per-player weather overrides where set.
+    pub fn broadcast_weather_thunder_level(&self, thunder_level: f32) {
+        for player in self.players.load().iter() {
+            player.send_weather_thunder_level(thunder_level);
+        }
+    }
+
     pub fn broadcast_system_message(&self, message: &TextComponent, overlay: bool) {
         let je_packet = CSystemChatMessage::new(message, overlay);
         let be_packet = Self::component_to_bedrock_text(message);
@@ -3747,32 +3769,7 @@ impl World {
             .await;
 
         // Send initial weather state
-        let (is_raining, rain_level, thunder_level) = {
-            let weather = self
-                .weather
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (
-                weather.raining,
-                weather.rain_level.clamp(0.0, 1.0),
-                weather.thunder_level.clamp(0.0, 1.0),
-            )
-        };
-        if is_raining {
-            client
-                .enqueue_client_packet(&CGameEvent::new(GameEvent::BeginRaining, 0.0))
-                .await;
-
-            client
-                .enqueue_client_packet(&CGameEvent::new(GameEvent::RainLevelChange, rain_level))
-                .await;
-            client
-                .enqueue_client_packet(&CGameEvent::new(
-                    GameEvent::ThunderLevelChange,
-                    thunder_level,
-                ))
-                .await;
-        }
+        player.send_weather(self);
 
         let player_bossbars = server
             .bossbars
