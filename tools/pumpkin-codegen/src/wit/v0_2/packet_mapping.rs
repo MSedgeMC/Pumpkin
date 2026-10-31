@@ -657,6 +657,13 @@ fn process_struct(
         struct_name.clone()
     };
 
+    // `c-player-info-update` holds helper records whose protocol form borrows from the packet,
+    // which the per-field conversions below cannot build.
+    if struct_name == "CPlayerInfoUpdate" && mode == MappingMode::Serialize {
+        emit_player_info_update(output, variant_prefix);
+        return;
+    }
+
     let mut prep_code = String::new();
     let mut field_inits = String::new();
     let mut possible = true;
@@ -735,6 +742,109 @@ fn process_struct(
         );
     }
 }
+
+/// `clientbound-packet.c-player-info-update` carries a `list<player>` of nested helper records
+/// that the per-field conversions cannot build: the protocol `Player` and `PlayerAction` values
+/// borrow their strings and display names, while the WIT values own them.
+fn emit_player_info_update(output: &mut String, variant_prefix: &str) {
+    output.push_str(&format!(
+        "        {variant_prefix}::CPlayerInfoUpdate(data) => {{\n"
+    ));
+    output.push_str(PLAYER_INFO_UPDATE_BODY);
+    output.push_str("        }\n");
+}
+
+/// Body of the arm emitted by [`emit_player_info_update`], with a throw-away indentation that
+/// `rustfmt` normalises afterwards.
+const PLAYER_INFO_UPDATE_BODY: &str = r#"            // `update-display-name` borrows a component that the WIT side only hands over as a
+            // string, so the components are built per player first and then consumed in the same
+            // order the actions are converted in.
+            let display_names: Vec<Vec<Option<pumpkin_util::text::TextComponent>>> = data
+                .players
+                .iter()
+                .map(|player| {
+                    player
+                        .actions
+                        .iter()
+                        .filter_map(|action| match action {
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateDisplayName(name) => {
+                                Some(name.as_ref().map(|name| pumpkin_util::text::TextComponent::text(name.clone())))
+                            }
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .collect();
+            let vec_actions: Vec<Vec<pumpkin_protocol::java::client::play::PlayerAction<'_>>> = data
+                .players
+                .iter()
+                .zip(&display_names)
+                .map(|(player, display_names)| {
+                    let mut display_names = display_names.iter();
+                    player
+                        .actions
+                        .iter()
+                        .map(|action| match action {
+                            crate::pumpkin::plugin::java_packets::PlayerAction::AddPlayer(action) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::AddPlayer {
+                                    name: &action.name,
+                                    // The WIT skin properties still resolve to the attribute
+                                    // properties record (#3688), so none can be carried yet.
+                                    properties: &[],
+                                }
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::InitializeChat(init_chat) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::InitializeChat(
+                                    init_chat.as_ref().map(|init_chat| pumpkin_protocol::java::client::play::InitChat {
+                                        session_id: uuid::Uuid::from_u64_pair(init_chat.session_id.high, init_chat.session_id.low),
+                                        expires_at: init_chat.expires_at,
+                                        public_key: init_chat.public_key.clone().into_boxed_slice(),
+                                        signature: init_chat.signature.clone().into_boxed_slice(),
+                                    }),
+                                )
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateGameMode(game_mode) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::UpdateGameMode(VarInt(*game_mode))
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateListed(listed) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::UpdateListed(*listed)
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateLatency(latency) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::UpdateLatency(VarInt(*latency))
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateDisplayName(_) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::UpdateDisplayName(
+                                    display_names.next().and_then(|name| name.as_ref()),
+                                )
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateListOrder(order) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::UpdateListOrder(VarInt(*order))
+                            }
+                            crate::pumpkin::plugin::java_packets::PlayerAction::UpdateHat(show_hat) => {
+                                pumpkin_protocol::java::client::play::PlayerAction::UpdateHat(*show_hat)
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+            let vec_players: Vec<pumpkin_protocol::java::client::play::Player<'_>> = data
+                .players
+                .iter()
+                .zip(&vec_actions)
+                .map(|(player, actions)| pumpkin_protocol::java::client::play::Player {
+                    uuid: uuid::Uuid::from_u64_pair(player.uuid.high, player.uuid.low),
+                    actions,
+                })
+                .collect();
+            let p = pumpkin_protocol::java::client::play::CPlayerInfoUpdate {
+                actions: data.actions,
+                players: &vec_players,
+            };
+            let mut buf = Vec::new();
+            pumpkin_core::net::java::JavaClient::write_packet_for_version(&p, version, &mut buf)
+                .unwrap();
+            Some(buf.into())
+"#;
 
 fn emit_struct_output(
     output: &mut String,

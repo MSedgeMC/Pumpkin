@@ -554,7 +554,11 @@ pub async fn init_plugin(
 #[cfg(test)]
 mod tests {
     use crate::generated_packets::{clientbound_java_any_to_wit, serialize_java_packet};
-    use crate::pumpkin::plugin::java_packets::{CSetBlockDestroyStage, ClientboundPacket};
+    use crate::pumpkin::plugin::java_packets::{
+        CPlayerInfoUpdate, CSetBlockDestroyStage, ClientboundPacket, Player, PlayerAction,
+        PlayerActionAddPlayer,
+    };
+    use crate::pumpkin::plugin::uuid::Uuid;
     use pumpkin_protocol::VarInt;
     use pumpkin_protocol::java::client::play::CSetBlockDestroyStage as ProtocolCSetBlockDestroyStage;
     use pumpkin_util::math::position::BlockPos;
@@ -594,5 +598,38 @@ mod tests {
                 }
             ))
         ));
+    }
+
+    #[test]
+    fn serializes_player_info_update() {
+        let packet = ClientboundPacket::CPlayerInfoUpdate(CPlayerInfoUpdate {
+            actions: 0x29,
+            players: vec![Player {
+                uuid: Uuid {
+                    high: 0x0123_4567_89ab_cdef,
+                    low: 0xfedc_ba98_7654_3210,
+                },
+                actions: vec![
+                    PlayerAction::AddPlayer(PlayerActionAddPlayer {
+                        name: "Pumpkin".to_string(),
+                        properties: vec![],
+                    }),
+                    PlayerAction::UpdateListed(true),
+                    PlayerAction::UpdateDisplayName(Some("Tab".to_string())),
+                ],
+            }],
+        });
+
+        let bytes = serialize_java_packet(&packet, JavaMinecraftVersion::V_26_3);
+
+        // The entry end of the body: name "Pumpkin", an empty property list and `listed`.
+        let entry = b"\x07Pumpkin\x00\x01";
+        assert_eq!(
+            bytes
+                .as_deref()
+                .map(|bytes| bytes.windows(entry.len()).any(|window| window == entry)),
+            Some(true),
+            "send-packet does not serialize c-player-info-update"
+        );
     }
 }
