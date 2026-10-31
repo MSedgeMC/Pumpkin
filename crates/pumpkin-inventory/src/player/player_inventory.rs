@@ -48,7 +48,7 @@ impl PlayerInventory {
     /// Size of the main inventory (36 slots: 27 storage + 9 hotbar).
     pub const MAIN_SIZE: usize = 36;
     /// Size of the hotbar (9 slots).
-    const HOTBAR_SIZE: usize = 9;
+    pub const HOTBAR_SIZE: usize = 9;
     /// Slot index for the off-hand (40).
     pub const OFF_HAND_SLOT: usize = 40;
 
@@ -373,28 +373,33 @@ impl PlayerInventory {
 
     /// Finds an empty hotbar slot to swap an item to.
     ///
+    /// Only the first `max_hotbar_slots` hotbar slots are considered. Vanilla always
+    /// passes all nine; the Bedrock `BlockPickRequest` carries the limit in `max_slots`.
+    ///
     /// First looks for empty slots, then slots without enchantments.
-    fn get_swappable_hotbar_slot(&self) -> usize {
+    fn get_swappable_hotbar_slot(&self, max_hotbar_slots: usize) -> usize {
+        let hotbar_slots = max_hotbar_slots.clamp(1, Self::HOTBAR_SIZE);
         let inv = self
             .main_inventory
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let selected_slot = self.get_selected_slot() as usize;
-        for i in 0..Self::HOTBAR_SIZE {
-            let check_index = (i + selected_slot) % 9;
+        for i in 0..hotbar_slots {
+            let check_index = (i + selected_slot) % hotbar_slots;
             if inv[check_index].is_empty() {
                 return check_index;
             }
         }
 
-        selected_slot
+        selected_slot % hotbar_slots
     }
 
     /// Swaps an item stack with an item on the hotbar.
     ///
-    /// Finds an empty hotbar slot and places the stack there.
-    pub fn swap_stack_with_hotbar(&self, stack: ItemStack) {
-        let swappable = self.get_swappable_hotbar_slot();
+    /// Finds an empty hotbar slot out of the first `max_hotbar_slots` hotbar slots and
+    /// places the stack there.
+    pub fn swap_stack_with_hotbar(&self, stack: ItemStack, max_hotbar_slots: usize) {
+        let swappable = self.get_swappable_hotbar_slot(max_hotbar_slots);
         self.set_selected_slot(swappable as u8);
         let selected = self.get_selected_slot() as usize;
         let mut inv = self
@@ -411,9 +416,10 @@ impl PlayerInventory {
         inv[selected] = stack;
     }
 
-    /// Swaps the items at two slot indices.
-    pub fn swap_slot_with_hotbar(&self, slot: usize) {
-        let swappable = self.get_swappable_hotbar_slot();
+    /// Swaps the items at slot `slot` and a hotbar slot out of the first
+    /// `max_hotbar_slots` hotbar slots.
+    pub fn swap_slot_with_hotbar(&self, slot: usize, max_hotbar_slots: usize) {
+        let swappable = self.get_swappable_hotbar_slot(max_hotbar_slots);
         self.set_selected_slot(swappable as u8);
         let selected = self.get_selected_slot() as usize;
         let mut inv = self
@@ -421,6 +427,41 @@ impl PlayerInventory {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         inv.swap(selected, slot);
+    }
+
+    /// Picks a stack into the hotbar, mirroring vanilla
+    /// `ServerGamePacketListenerImpl#tryPickItem`.
+    ///
+    /// A matching stack already in a hotbar slot gets that slot selected, a matching
+    /// stack elsewhere in the main inventory is swapped into the hotbar, and otherwise
+    /// the stack is added to the hotbar when `add_if_missing` is set (creative).
+    ///
+    /// `max_hotbar_slots` is the number of hotbar slots the server may fill, not a slot
+    /// index. Vanilla always allows [`Self::HOTBAR_SIZE`]; the Bedrock
+    /// `BlockPickRequest` sends it in `max_slots` and the official client sends `9`.
+    ///
+    /// Returns `true` if the selection changed or the inventory was modified.
+    pub fn pick_item_into_hotbar(
+        &self,
+        stack: ItemStack,
+        add_if_missing: bool,
+        max_hotbar_slots: usize,
+    ) -> bool {
+        let slot_with_stack = self.get_slot_with_stack(&stack);
+
+        if slot_with_stack != -1 {
+            if Self::is_valid_hotbar_index(slot_with_stack as usize) {
+                self.set_selected_slot(slot_with_stack as u8);
+            } else {
+                self.swap_slot_with_hotbar(slot_with_stack as usize, max_hotbar_slots);
+            }
+            true
+        } else if add_if_missing {
+            self.swap_stack_with_hotbar(stack, max_hotbar_slots);
+            true
+        } else {
+            false
+        }
     }
 
     /// Gets the item in the specified slot (synchronously).
@@ -808,5 +849,72 @@ mod tests {
             "6 arrows should remain after filling off-hand to 64"
         );
         assert_eq!(inv.off_hand_item().item_count, 64);
+    }
+
+    /// The Bedrock `BlockPickRequest` sends the number of usable hotbar slots in
+    /// `max_slots` (the official client always sends 9), not a hotbar slot index, so a
+    /// limit of 9 has to pick the item instead of being rejected.
+    #[test]
+    fn pick_item_into_hotbar_accepts_max_slots_of_nine() {
+        let inv = create_test_inventory();
+
+        let picked = inv.pick_item_into_hotbar(
+            ItemStack::new(1, &Item::DIRT),
+            true,
+            PlayerInventory::HOTBAR_SIZE,
+        );
+
+        assert!(picked);
+        assert_eq!(inv.get_selected_slot(), 0);
+        assert_eq!(inv.get_slot(0).item.id, Item::DIRT.id);
+    }
+
+    #[test]
+    fn pick_item_into_hotbar_selects_slot_of_existing_stack() {
+        let inv = create_test_inventory();
+        inv.set_slot(4, ItemStack::new(1, &Item::DIRT));
+
+        let picked = inv.pick_item_into_hotbar(ItemStack::new(1, &Item::DIRT), true, 9);
+
+        assert!(picked);
+        assert_eq!(inv.get_selected_slot(), 4);
+    }
+
+    #[test]
+    fn pick_item_into_hotbar_swaps_stack_out_of_main_inventory() {
+        let inv = create_test_inventory();
+        inv.set_slot(20, ItemStack::new(1, &Item::DIRT));
+
+        let picked = inv.pick_item_into_hotbar(ItemStack::new(1, &Item::DIRT), true, 9);
+
+        assert!(picked);
+        assert_eq!(inv.get_selected_slot(), 0);
+        assert_eq!(inv.get_slot(0).item.id, Item::DIRT.id);
+        assert!(inv.get_slot(20).is_empty());
+    }
+
+    #[test]
+    fn pick_item_into_hotbar_does_nothing_without_creative_or_existing_stack() {
+        let inv = create_test_inventory();
+
+        let picked = inv.pick_item_into_hotbar(ItemStack::new(1, &Item::DIRT), false, 9);
+
+        assert!(!picked);
+        assert!(inv.get_slot(0).is_empty());
+    }
+
+    /// Only the first `max_slots` hotbar slots may be filled.
+    #[test]
+    fn get_swappable_hotbar_slot_stays_within_max_slots() {
+        let inv = create_test_inventory();
+        for i in 0..3 {
+            inv.set_slot(i, ItemStack::new(1, &Item::ARROW));
+        }
+
+        assert_eq!(inv.get_swappable_hotbar_slot(3), 0);
+        assert_eq!(
+            inv.get_swappable_hotbar_slot(PlayerInventory::HOTBAR_SIZE),
+            3
+        );
     }
 }

@@ -24,19 +24,11 @@ impl JavaClient {
         };
         let stack = ItemStack::new(1, item);
 
-        let slot_with_stack = player.inventory().get_slot_with_stack(&stack);
-
-        if slot_with_stack != -1 {
-            if PlayerInventory::is_valid_hotbar_index(slot_with_stack as usize) {
-                player.inventory.set_selected_slot(slot_with_stack as u8);
-            } else {
-                player
-                    .inventory
-                    .swap_slot_with_hotbar(slot_with_stack as usize);
-            }
-        } else if player.gamemode.load() == GameMode::Creative {
-            player.inventory.swap_stack_with_hotbar(stack);
-        }
+        player.inventory.pick_item_into_hotbar(
+            stack,
+            player.gamemode.load() == GameMode::Creative,
+            PlayerInventory::HOTBAR_SIZE,
+        );
 
         player.try_send_client_packet(&CSetSelectedSlot::new(
             player.inventory.get_selected_slot() as i8
@@ -83,19 +75,11 @@ impl JavaClient {
         if let Some(item) = found_egg.and_then(Item::from_id) {
             let stack = ItemStack::new(1, item);
 
-            let slot_with_stack = player.inventory().get_slot_with_stack(&stack);
-
-            if slot_with_stack != -1 {
-                if PlayerInventory::is_valid_hotbar_index(slot_with_stack as usize) {
-                    player.inventory.set_selected_slot(slot_with_stack as u8);
-                } else {
-                    player
-                        .inventory
-                        .swap_slot_with_hotbar(slot_with_stack as usize);
-                }
-            } else if player.gamemode.load() == GameMode::Creative {
-                player.inventory.swap_stack_with_hotbar(stack);
-            }
+            player.inventory.pick_item_into_hotbar(
+                stack,
+                player.gamemode.load() == GameMode::Creative,
+                PlayerInventory::HOTBAR_SIZE,
+            );
 
             player.try_send_client_packet(&CSetSelectedSlot::new(
                 player.inventory.get_selected_slot() as i8,

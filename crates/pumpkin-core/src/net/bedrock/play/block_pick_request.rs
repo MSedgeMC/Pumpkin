@@ -2,7 +2,6 @@
 use super::*;
 
 impl BedrockClient {
-    #[allow(clippy::too_many_lines)]
     pub fn handle_block_pick_request(&self, player: &Arc<Player>, packet: &SBlockPickRequest) {
         if !player.can_interact_with_block_at(&packet.position, 1.0) {
             return;
@@ -20,44 +19,18 @@ impl BedrockClient {
         };
         let stack = ItemStack::new(1, item);
 
-        let target_hotbar_slot = packet.max_slots as usize;
-        if target_hotbar_slot >= 9 {
+        // Same pick as the Java `ServerboundPickItemFromBlockPacket` handler. `max_slots`
+        // is the number of hotbar slots the server may fill, not a slot index, and the
+        // official client always sends 9. Block entity NBT (`with_data`) is not copied,
+        // matching the Java path.
+        let picked = player.inventory.pick_item_into_hotbar(
+            stack,
+            player.gamemode.load() == GameMode::Creative,
+            packet.max_slots as usize,
+        );
+        if !picked {
             return;
         }
-
-        let slot_with_stack = player.inventory().get_slot_with_stack(&stack);
-
-        if slot_with_stack != -1 {
-            if pumpkin_inventory::player::player_inventory::PlayerInventory::is_valid_hotbar_index(
-                slot_with_stack as usize,
-            ) {
-                if slot_with_stack as usize != target_hotbar_slot {
-                    let target_stack = player.inventory().get_stack(target_hotbar_slot);
-                    let source_stack = player.inventory().get_stack(slot_with_stack as usize);
-                    player
-                        .inventory()
-                        .set_stack(target_hotbar_slot, source_stack);
-                    player
-                        .inventory()
-                        .set_stack(slot_with_stack as usize, target_stack);
-                }
-            } else {
-                let target_stack = player.inventory().get_stack(target_hotbar_slot);
-                let source_stack = player.inventory().get_stack(slot_with_stack as usize);
-                player
-                    .inventory()
-                    .set_stack(target_hotbar_slot, source_stack);
-                player
-                    .inventory
-                    .set_stack(slot_with_stack as usize, target_stack);
-            }
-        } else if player.gamemode.load() == GameMode::Creative {
-            player.inventory.set_stack(target_hotbar_slot, stack);
-        } else {
-            return;
-        }
-
-        player.inventory.set_selected_slot(target_hotbar_slot as u8);
 
         // Send hotbar updates
         player.client.try_enqueue_packet_editioned(
