@@ -1702,34 +1702,6 @@ impl pumpkin::plugin::player::HostPlayer for PluginHostState {
         Ok(())
     }
 
-    fn open_sign_editor(
-        &mut self,
-        player: Resource<Player>,
-        pos: pumpkin::plugin::common::BlockPos,
-        is_front_text: bool,
-    ) -> wasmtime::Result<()> {
-        let player = self.get(&player)?;
-        player.open_sign_editor(
-            pumpkin_util::math::position::BlockPos(pumpkin_util::math::vector3::Vector3::new(
-                pos.x, pos.y, pos.z,
-            )),
-            is_front_text,
-        );
-        Ok(())
-    }
-
-    fn set_velocity(
-        &mut self,
-        player: Resource<Player>,
-        velocity: pumpkin::plugin::common::Position,
-    ) -> wasmtime::Result<()> {
-        let player = self.get(&player)?;
-        player.set_velocity(pumpkin_util::math::vector3::Vector3::new(
-            velocity.0, velocity.1, velocity.2,
-        ));
-        Ok(())
-    }
-
     fn apply_knockback(
         &mut self,
         player: Resource<Player>,
@@ -1766,24 +1738,6 @@ impl pumpkin::plugin::player::HostPlayer for PluginHostState {
     fn get_freeze_ticks(&mut self, player: Resource<Player>) -> wasmtime::Result<i32> {
         let player = self.get(&player)?;
         Ok(player.get_freeze_ticks())
-    }
-
-    fn set_server_links(
-        &mut self,
-        player: Resource<Player>,
-        links: Vec<pumpkin::plugin::player::ServerLink>,
-    ) -> wasmtime::Result<()> {
-        let player = self.get(&player)?.clone();
-        let mut converted = Vec::new();
-        for link in links {
-            converted.push(from_wit_server_link(self, link)?);
-        }
-        let protocol_links: Vec<pumpkin_protocol::Link<'_>> = converted
-            .iter()
-            .map(|(label, url)| pumpkin_protocol::Link::new(label.clone(), url))
-            .collect();
-        player.set_server_links(&protocol_links);
-        Ok(())
     }
 
     fn remove_effect(
@@ -1870,18 +1824,6 @@ impl pumpkin::plugin::player::HostPlayer for PluginHostState {
     ) -> wasmtime::Result<()> {
         let player = self.get(&player)?;
         player.set_stat(from_wit_statistic_category(category), stat_id, value);
-        Ok(())
-    }
-
-    fn increment_statistic(
-        &mut self,
-        player: Resource<Player>,
-        category: WitStatisticCategory,
-        stat_id: i32,
-        amount: i32,
-    ) -> wasmtime::Result<()> {
-        let player = self.get(&player)?;
-        player.increment_stat(from_wit_statistic_category(category), stat_id, amount);
         Ok(())
     }
 
@@ -3116,6 +3058,95 @@ impl pumpkin::plugin::player::HostPlayerWithStore<PluginHostState> for HasSelf<P
                     allow_put_items,
                 )));
                 player.open_handled_screen_direct(screen_handler, &title);
+            })
+            .await
+    }
+
+    async fn open_sign_editor(
+        mut host: Access<'_, PluginHostState, Self>,
+        player: Resource<Player>,
+        pos: pumpkin::plugin::common::BlockPos,
+        is_front_text: bool,
+    ) -> wasmtime::Result<()> {
+        let (player, plugin) = {
+            let state = host.get();
+            (state.get(&player)?.clone(), plugin_from_state(state)?)
+        };
+        let pos = pumpkin_util::math::position::BlockPos(
+            pumpkin_util::math::vector3::Vector3::new(pos.x, pos.y, pos.z),
+        );
+
+        plugin
+            .store
+            .pump_blocking(&mut host, move || {
+                player.open_sign_editor(pos, is_front_text);
+            })
+            .await
+    }
+
+    async fn set_velocity(
+        mut host: Access<'_, PluginHostState, Self>,
+        player: Resource<Player>,
+        velocity: pumpkin::plugin::common::Position,
+    ) -> wasmtime::Result<()> {
+        let (player, plugin) = {
+            let state = host.get();
+            (state.get(&player)?.clone(), plugin_from_state(state)?)
+        };
+        let velocity =
+            pumpkin_util::math::vector3::Vector3::new(velocity.0, velocity.1, velocity.2);
+
+        plugin
+            .store
+            .pump_blocking(&mut host, move || player.set_velocity(velocity))
+            .await
+    }
+
+    async fn set_server_links(
+        mut host: Access<'_, PluginHostState, Self>,
+        player: Resource<Player>,
+        links: Vec<pumpkin::plugin::player::ServerLink>,
+    ) -> wasmtime::Result<()> {
+        let (player, plugin, converted) = {
+            let state = host.get();
+            let player = state.get(&player)?.clone();
+            let plugin = plugin_from_state(state)?;
+            let mut converted = Vec::new();
+            for link in links {
+                converted.push(from_wit_server_link(state, link)?);
+            }
+            (player, plugin, converted)
+        };
+
+        plugin
+            .store
+            .pump_blocking(&mut host, move || {
+                let protocol_links: Vec<pumpkin_protocol::Link<'_>> = converted
+                    .iter()
+                    .map(|(label, url)| pumpkin_protocol::Link::new(label.clone(), url))
+                    .collect();
+                player.set_server_links(&protocol_links);
+            })
+            .await
+    }
+
+    async fn increment_statistic(
+        mut host: Access<'_, PluginHostState, Self>,
+        player: Resource<Player>,
+        category: WitStatisticCategory,
+        stat_id: i32,
+        amount: i32,
+    ) -> wasmtime::Result<()> {
+        let (player, plugin) = {
+            let state = host.get();
+            (state.get(&player)?.clone(), plugin_from_state(state)?)
+        };
+        let category = from_wit_statistic_category(category);
+
+        plugin
+            .store
+            .pump_blocking(&mut host, move || {
+                player.increment_stat(category, stat_id, amount);
             })
             .await
     }

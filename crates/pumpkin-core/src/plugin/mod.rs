@@ -1246,6 +1246,12 @@ impl PluginManager {
 
     /// Fire an event to all registered handlers synchronously (blocking if handlers exist).
     /// If no handlers are registered for this event, returns immediately without runtime overhead.
+    ///
+    /// Must not be called from a thread that is already inside a Wasm plugin guest call, such as a
+    /// synchronous host import: a Wasm handler is dispatched by re-entering its Store, which cannot
+    /// be serviced while that thread waits for this call. Host imports that fire events use
+    /// `StoreHandle::pump_blocking`, which moves the work to a blocking thread so the Store driver
+    /// keeps servicing the nested dispatch.
     pub fn fire_blocking<E: Payload + Send + Sync + 'static>(
         &self,
         server: &Arc<Server>,
