@@ -361,6 +361,7 @@ macro_rules! impl_block_entity_for_cooking {
                 &self,
                 world: &Arc<$crate::world::World>,
             ) {
+                self.persist_to_chunk(world);
                 let is_burning = self.is_burning();
                 let mut is_dirty = false;
                 if self.is_burning() {

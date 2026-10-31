@@ -78,6 +78,7 @@ impl BlockEntity for JukeboxBlockEntity {
     }
 
     fn tick(&self, world: &Arc<World>) {
+        self.persist_to_chunk(world);
         // Increment ticks if we're playing
         self.world.get_or_init(|| Arc::downgrade(world));
         let song_length = self.song_length_ticks.load(Ordering::Relaxed);

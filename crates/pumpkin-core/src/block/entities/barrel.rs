@@ -71,6 +71,7 @@ impl BlockEntity for BarrelBlockEntity {
     fn tick(&self, world: &Arc<World>) {
         self.viewers
             .update_viewer_count::<Self>(self, world, &self.position);
+        self.persist_to_chunk(world);
     }
 
     fn get_inventory(self: Arc<Self>) -> Option<Arc<dyn Inventory>> {

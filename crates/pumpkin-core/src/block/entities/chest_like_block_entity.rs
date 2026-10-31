@@ -83,6 +83,7 @@ macro_rules! impl_block_entity_for_chest {
                     world,
                     &self.position,
                 );
+                self.persist_to_chunk(world);
             }
 
             fn get_inventory(self: Arc<Self>) -> Option<Arc<dyn pumpkin_inventory::Inventory>> {

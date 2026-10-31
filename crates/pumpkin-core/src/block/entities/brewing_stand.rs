@@ -580,6 +580,7 @@ impl crate::block::entities::BlockEntity for BrewingStandBlockEntity {
 
     #[allow(clippy::too_many_lines)]
     fn tick(&self, world: &Arc<crate::world::World>) {
+        self.persist_to_chunk(world);
         // Refill fuel counter from fuel item if needed
         let fuel_refilled = self.try_refill_fuel(world);
 

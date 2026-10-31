@@ -62,6 +62,7 @@ impl BlockEntity for ShulkerBoxBlockEntity {
     fn tick(&self, world: &Arc<World>) {
         self.viewers
             .update_viewer_count::<Self>(self, world, &self.position);
+        self.persist_to_chunk(world);
     }
 
     fn on_block_replaced(self: Arc<Self>, _world: &Arc<World>, _position: &BlockPos) {

@@ -92,6 +92,7 @@ impl BlockEntity for HopperBlockEntity {
     }
 
     fn tick(&self, world: &Arc<World>) {
+        self.persist_to_chunk(world);
         self.ticked_game_time
             .store(world.get_world_age(), Ordering::Relaxed);
         // The block entity outlives its block by a tick when another Rayon worker replaces it,

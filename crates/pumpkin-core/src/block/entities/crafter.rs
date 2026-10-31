@@ -95,6 +95,7 @@ impl BlockEntity for CrafterBlockEntity {
     }
 
     fn tick(&self, world: &Arc<World>) {
+        self.persist_to_chunk(world);
         let remaining = self.crafting_ticks_remaining.load(Ordering::Relaxed);
         if remaining > 0 {
             let next = remaining - 1;

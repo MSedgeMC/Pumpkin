@@ -152,6 +152,33 @@ pub trait BlockEntity: Any + Send + Sync {
         // Override in implementations that have a dirty flag
     }
 
+    /// Copies a changed block entity into the block entity data of its chunk.
+    ///
+    /// Vanilla stores block entities inside the chunk, so a change is part of the chunk data
+    /// and is written with it. Pumpkin keeps live entities in a world map and only copies them
+    /// into the chunk on save, so everything changed since the last save is dropped when the
+    /// chunk unloads first. Call this from the tick, like vanilla's `setChanged` marking the
+    /// owning chunk unsaved.
+    fn persist_to_chunk(&self, world: &Arc<World>) {
+        if !self.is_dirty() {
+            return;
+        }
+
+        let mut nbt = NbtCompound::new();
+        self.write_internal(&mut nbt);
+        let position = self.get_position();
+        let custom_data = world
+            .custom_block_entity_data
+            .get(&position)
+            .map(|data| data.clone())
+            .filter(|data| !data.is_empty());
+        if let Some(custom_data) = custom_data {
+            nbt.put_compound("PumpkinCustomData", custom_data);
+        }
+        world.add_block_entity_nbt(position, &nbt);
+        self.clear_dirty();
+    }
+
     /// Same idea as [`Self::is_dirty`]/[`Self::clear_dirty`], tracked separately.
     fn is_comparator_dirty(&self) -> bool {
         false
