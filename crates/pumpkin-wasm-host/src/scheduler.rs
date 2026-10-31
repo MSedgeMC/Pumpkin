@@ -14,6 +14,11 @@ use crate::runtime::v0_2_disabled;
 pub fn tick(scheduler: &TaskScheduler, server: &Arc<Server>) {
     let current_tick = server.tick_count.load(Ordering::Relaxed) as u64;
     for task in scheduler.take_due_tasks(current_tick) {
+        if !task.plugin.should_dispatch() {
+            // The store is gone, so drop the remaining tasks and refuse any new ones.
+            scheduler.disable_plugin(&task.plugin);
+            continue;
+        }
         run_task(server, &task);
         scheduler.reschedule(task, current_tick);
     }

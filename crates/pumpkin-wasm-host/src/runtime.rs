@@ -226,12 +226,13 @@ impl PluginRuntime {
         )
         .await
         .map_err(PluginInitError::InstantiationFailed)?;
-        let wasm_plugin = Arc::new(WasmPlugin {
+        let wasm_plugin = Arc::new(WasmPlugin::new(
+            metadata.name.clone(),
             plugin_instance,
             api_version,
             store,
-            task_scheduler: Arc::clone(&self.task_scheduler),
-        });
+            Arc::clone(&self.task_scheduler),
+        ));
         let weak_plugin = Arc::downgrade(&wasm_plugin);
         wasm_plugin
             .store

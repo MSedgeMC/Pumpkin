@@ -1,5 +1,13 @@
-use std::{any::Any, sync::Arc};
+use std::{
+    any::Any,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use thiserror::Error;
+
+use pumpkin_plugin_runtime::DriverState;
 
 use crate::{concurrent_store::LegacyStore, scheduler::TaskScheduler};
 
@@ -101,14 +109,37 @@ pub enum PluginApiVersion {
 }
 
 pub struct WasmPlugin {
+    /// The name of the plugin, so log lines about this instance can name it.
+    pub name: String,
     /// The guest exports of the plugin, as generated for `api_version`.
     pub plugin_instance: Arc<dyn Any + Send + Sync>,
     pub api_version: PluginApiVersion,
     pub store: LegacyStore,
     pub task_scheduler: Arc<TaskScheduler>,
+    /// Set once the terminal state of `store` has been reported, see [`Self::should_dispatch`].
+    terminal_reported: AtomicBool,
 }
 
 impl WasmPlugin {
+    /// Registers a loaded plugin and the store that runs its guest.
+    #[must_use]
+    pub fn new(
+        name: String,
+        plugin_instance: Arc<dyn Any + Send + Sync>,
+        api_version: PluginApiVersion,
+        store: LegacyStore,
+        task_scheduler: Arc<TaskScheduler>,
+    ) -> Self {
+        Self {
+            name,
+            plugin_instance,
+            api_version,
+            store,
+            task_scheduler,
+            terminal_reported: AtomicBool::new(false),
+        }
+    }
+
     /// The guest exports of this plugin. Each API version's host only ever sees plugins of its own version.
     ///
     /// # Panics
@@ -118,6 +149,34 @@ impl WasmPlugin {
         self.plugin_instance
             .downcast_ref()
             .unwrap_or_else(|| panic!("Unexpected plugin version in host path."))
+    }
+
+    /// Whether this plugin can still be handed an event or a scheduled task run.
+    ///
+    /// A plugin whose store trapped or stopped keeps its registered handlers and tasks, so both
+    /// dispatch sites ask this before dispatching. The first one that finds the store terminal
+    /// reports it once; later ones skip the plugin without logging, instead of printing an error
+    /// per event and per task run.
+    #[must_use]
+    pub fn should_dispatch(&self) -> bool {
+        let state = self.store.state();
+        if !state.is_terminal() {
+            return true;
+        }
+        if !self.terminal_reported.swap(true, Ordering::AcqRel) {
+            match &state {
+                DriverState::Failed(error) => tracing::error!(
+                    plugin = %self.name,
+                    %error,
+                    "Wasm plugin failed; its events and tasks are skipped"
+                ),
+                _ => tracing::error!(
+                    plugin = %self.name,
+                    "Wasm plugin stopped; its events and tasks are skipped"
+                ),
+            }
+        }
+        false
     }
 }
 
@@ -129,9 +188,18 @@ impl Drop for WasmPlugin {
 
 #[cfg(test)]
 mod tests {
-    use wasm_encoder::{ComponentBuilder, ComponentTypeRef, InstanceType};
+    use std::sync::Arc;
 
-    use super::{is_wasi_p3_import, scan_component_names};
+    use wasm_encoder::{ComponentBuilder, ComponentTypeRef, InstanceType};
+    use wasmtime::{Engine, Store};
+
+    use super::{
+        PluginApiVersion, TaskScheduler, WasmPlugin, is_wasi_p3_import, scan_component_names,
+    };
+    use crate::{
+        concurrent_store::{LegacySyncReentry, StoreMode, TokioSpawner, start_legacy_store},
+        state::PluginHostState,
+    };
 
     fn component_importing(names: &[&str]) -> Vec<u8> {
         let mut component = ComponentBuilder::default();
@@ -165,5 +233,35 @@ mod tests {
     #[test]
     fn scan_rejects_bytes_that_are_not_a_component() {
         assert!(scan_component_names(b"not wasm").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_stopped_store_stops_dispatching() {
+        let store = start_legacy_store(
+            Store::new(&Engine::default(), PluginHostState::new()),
+            LegacySyncReentry::new(),
+            Arc::new(TokioSpawner::new(tokio::runtime::Handle::current())),
+            StoreMode::Sequential,
+        )
+        .await
+        .unwrap();
+        let plugin = WasmPlugin::new(
+            "test".to_string(),
+            Arc::new(()),
+            PluginApiVersion::V0_1,
+            store,
+            Arc::new(TaskScheduler::new()),
+        );
+        assert!(plugin.should_dispatch());
+
+        plugin
+            .store
+            .shutdown(|_| Box::pin(async { Ok::<(), wasmtime::Error>(()) }))
+            .await
+            .unwrap();
+
+        assert!(!plugin.should_dispatch());
+        // Still skipped, and silent, on every dispatch after the first report.
+        assert!(!plugin.should_dispatch());
     }
 }
