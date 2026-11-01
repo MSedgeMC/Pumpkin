@@ -14,6 +14,27 @@ pub const INVALID_BLOCK_ERROR_TYPE: CommandErrorType<1> = CommandErrorType::new(
     translation::java::ARGUMENT_BLOCK_ID_INVALID,
 );
 
+/// Reads a block id such as `minecraft:oak_slab` from a [`StringReader`].
+pub fn read_block(reader: &mut StringReader) -> Result<&'static Block, CommandSyntaxError> {
+    let start = reader.cursor();
+    while let Some(c) = reader.peek() {
+        if c.is_alphanumeric() || c == '_' || c == ':' || c == '/' || c == '.' || c == '-' {
+            reader.skip();
+        } else {
+            break;
+        }
+    }
+    let block_name = &reader.string()[start..reader.cursor()];
+    let normalized = if block_name.contains(':') {
+        block_name.to_string()
+    } else {
+        format!("minecraft:{block_name}")
+    };
+
+    Block::from_name(&normalized)
+        .ok_or_else(|| INVALID_BLOCK_ERROR_TYPE.create(reader, TextComponent::text(normalized)))
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BlockArgumentType;
 
@@ -21,23 +42,7 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for BlockArgumentType {
     type Item = &'static Block;
 
     fn parse(&self, reader: &mut StringReader) -> Result<Self::Item, CommandSyntaxError> {
-        let start = reader.cursor();
-        while let Some(c) = reader.peek() {
-            if c.is_alphanumeric() || c == '_' || c == ':' || c == '/' || c == '.' || c == '-' {
-                reader.skip();
-            } else {
-                break;
-            }
-        }
-        let block_name = &reader.string()[start..reader.cursor()];
-        let normalized = if block_name.contains(':') {
-            block_name.to_string()
-        } else {
-            format!("minecraft:{block_name}")
-        };
-
-        Block::from_name(&normalized)
-            .ok_or_else(|| INVALID_BLOCK_ERROR_TYPE.create(reader, TextComponent::text(normalized)))
+        read_block(reader)
     }
 
     fn client_side_parser(&'_ self) -> JavaClientArgumentType {
