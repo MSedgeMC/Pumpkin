@@ -83,7 +83,7 @@ impl BlockBehaviour for TripwireHookBlock {
     }
 
     fn on_state_replaced(&self, args: OnStateReplacedArgs<'_>) {
-        if args.moved || Block::from_state_id(args.old_state_id) == args.block {
+        if args.moved {
             return;
         }
         let props = TripwireHookProperties::from_state_id(args.old_state_id);
