@@ -136,6 +136,12 @@ impl GameEventListener for JukeboxListener<'_> {
         GameEvent::JukeboxPlay.notification_radius()
     }
 
+    /// Vanilla's jukebox listener is a plain `GameEventListener`, not a `VibrationSystem`
+    /// listener, so Bukkit never fires `BlockReceiveGameEvent` for it.
+    fn accepts_game_event(&self, _event: GameEvent, _context: &GameEventContext<'_>) -> bool {
+        false
+    }
+
     fn handle_game_event(
         &self,
         _world: &World,
@@ -165,6 +171,16 @@ impl GameEventListener for VibrationListener<'_> {
         VIBRATION_EVENT_LISTENER_RANGE
     }
 
+    fn accepts_game_event(&self, event: GameEvent, context: &GameEventContext<'_>) -> bool {
+        self.0
+            .vibration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .current
+            .is_none()
+            && is_valid_vibration(event, context)
+    }
+
     fn handle_game_event(
         &self,
         world: &World,
@@ -173,14 +189,7 @@ impl GameEventListener for VibrationListener<'_> {
         source_position: Vector3<f64>,
     ) -> bool {
         let allay = self.0;
-        if allay
-            .vibration
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .current
-            .is_some()
-            || !is_valid_vibration(event, context)
-        {
+        if !self.accepts_game_event(event, context) {
             return false;
         }
         let destination = allay.get_eye_pos();

@@ -1,3 +1,6 @@
+use std::cell::OnceCell;
+use std::sync::Arc;
+
 use pumpkin_data::game_event::GameEvent;
 use pumpkin_util::math::{
     boundingbox::BoundingBox,
@@ -8,6 +11,7 @@ use pumpkin_world::generation::section_coords::section_to_block;
 
 use super::{World, entity_islands};
 use crate::entity::EntityBase;
+use crate::plugin::api::events::block::block_receive_game::BlockReceiveGameEvent;
 
 pub struct GameEventContext<'a> {
     pub source_entity: Option<&'a dyn EntityBase>,
@@ -17,6 +21,16 @@ pub trait GameEventListener {
     fn listener_position(&self) -> Vector3<f64>;
 
     fn listener_radius(&self) -> i32;
+
+    /// Whether this listener takes `event` right now.
+    ///
+    /// Vanilla `VibrationSystem.User.isValidVibration` (`VibrationSystem.java:219-220`) and
+    /// the pending-vibration check before it (`VibrationSystem.java:217-218`). Bukkit fires
+    /// `BlockReceiveGameEvent` from `VibrationSystem$Listener.handleGameEvent`, which is only
+    /// reached once both pass, so the dispatcher fires the plugin event only for listeners
+    /// that answer yes. It does not gate `handle_game_event`: a listener that answers no
+    /// still handles the event, it just never produces the plugin event.
+    fn accepts_game_event(&self, event: GameEvent, context: &GameEventContext<'_>) -> bool;
 
     fn handle_game_event(
         &self,
@@ -64,6 +78,10 @@ impl World {
         let center = BlockPos::floored_v(position);
         let (section_min, section_max) = notified_sections(center, radius);
         let area = notified_area(position, radius);
+        // The plugin event owns its source entity while the dispatcher only borrows it.
+        // Resolve it at most once, and only when a plugin listens: the lookup scans every
+        // entity in the world.
+        let source_entity: OnceCell<Option<Arc<dyn EntityBase>>> = OnceCell::new();
         for entity in self.entity_index.query(self.entities.load_full(), area) {
             let Some(mob) = entity.get_mob() else {
                 continue;
@@ -89,6 +107,37 @@ impl World {
                     return;
                 }
                 entity_islands::check_reached(entity.get_entity().entity_id);
+                // Bukkit fires this from `VibrationSystem$Listener.handleGameEvent`, once per
+                // listener the event reaches, for the block the listener sits in. A listener
+                // that answers no still handles the event below, it just produces no plugin
+                // event: the allay's jukebox listener is not a `VibrationSystem.Listener`.
+                if listener.accepts_game_event(event, context)
+                    && let Some(server) = self.server.upgrade()
+                    && server
+                        .plugin_manager
+                        .has_handlers::<BlockReceiveGameEvent>()
+                {
+                    let mut plugin_event = BlockReceiveGameEvent::new(
+                        listener_block,
+                        // The event owns an `Arc<World>` while the dispatcher only has
+                        // `&self`; the listener entity holds the same allocation.
+                        entity.get_entity().world.load_full(),
+                        event.name().to_string(),
+                        source_entity
+                            .get_or_init(|| {
+                                context.source_entity.and_then(|source| {
+                                    self.get_entity_by_id(source.get_entity().entity_id)
+                                })
+                            })
+                            .clone(),
+                    );
+                    server
+                        .plugin_manager
+                        .fire_blocking(&server, &mut plugin_event);
+                    if plugin_event.cancelled {
+                        return;
+                    }
+                }
                 listener.handle_game_event(self, event, context, position);
             });
         }
