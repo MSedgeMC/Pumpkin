@@ -1,9 +1,10 @@
 use super::BlockEntity;
+use crate::world::World;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct DecoratedPotBlockEntity {
     pub position: BlockPos,
@@ -128,6 +129,19 @@ impl BlockEntity for DecoratedPotBlockEntity {
                 .item
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(it.clone());
+        }
+    }
+
+    /// Vanilla `BlockEntity#preRemoveSideEffects` spills the single stored stack, because
+    /// `DecoratedPotBlockEntity` is a `Container` (`ContainerSingleItem`).
+    fn on_block_replaced(self: Arc<Self>, world: &Arc<World>, position: &BlockPos) {
+        if let Some(item) = self.take_item() {
+            world.scatter_stack(
+                f64::from(position.0.x),
+                f64::from(position.0.y),
+                f64::from(position.0.z),
+                item,
+            );
         }
     }
 
