@@ -732,9 +732,9 @@ fn count_blocks_match(
     context: &CommandContext,
     masked: bool,
 ) -> Result<Option<i32>, CommandSyntaxError> {
-    let start = BlockPosArgumentType::get_block_pos(context, "start")?;
-    let end = BlockPosArgumentType::get_block_pos(context, "end")?;
-    let destination = BlockPosArgumentType::get_block_pos(context, "destination")?;
+    let start = BlockPosArgumentType::get_loaded_block_pos(context, "start")?;
+    let end = BlockPosArgumentType::get_loaded_block_pos(context, "end")?;
+    let destination = BlockPosArgumentType::get_loaded_block_pos(context, "destination")?;
 
     if let Some(ref world) = context.source.world {
         let min_x = start.0.x.min(end.0.x);
