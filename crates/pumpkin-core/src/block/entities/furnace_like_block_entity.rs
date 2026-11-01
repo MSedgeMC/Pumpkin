@@ -622,6 +622,26 @@ macro_rules! impl_block_entity_for_cooking {
                 Some(self)
             }
 
+            fn on_block_replaced(
+                self: Arc<Self>,
+                world: &Arc<$crate::world::World>,
+                position: &BlockPos,
+            ) {
+                if let Some(inventory) = self.clone().get_inventory() {
+                    world.scatter_inventory(position, &inventory);
+                }
+                // `AbstractFurnaceBlockEntity#preRemoveSideEffects` pops the stored experience
+                // here, while the block entity is still alive and `RecipesUsed` is readable.
+                let xp = self.extract_experience_from_recipes();
+                if xp > 0 {
+                    $crate::entity::experience_orb::ExperienceOrbEntity::spawn(
+                        world,
+                        position.to_centered_f64(),
+                        xp as u32,
+                    );
+                }
+            }
+
             fn is_comparator_dirty(&self) -> bool {
                 self.comparator_dirty.load(Ordering::Relaxed)
             }
