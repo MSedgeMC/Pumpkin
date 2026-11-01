@@ -285,7 +285,7 @@ fn execute_facing_entity_modifier(
 fn execute_if_block_modifier(
     context: &CommandContext,
 ) -> crate::command::node::RedirectModifierResult {
-    let pos = BlockPosArgumentType::get_block_pos(context, "pos")?;
+    let pos = BlockPosArgumentType::get_loaded_block_pos(context, "pos")?;
     let expected = BlockPredicateArgumentType::get(context, "block")?;
 
     if let Some(ref world) = context.source.world {
@@ -385,7 +385,7 @@ fn execute_unless_dimension_modifier(
 fn execute_if_biome_modifier(
     context: &CommandContext,
 ) -> crate::command::node::RedirectModifierResult {
-    let pos = BlockPosArgumentType::get_block_pos(context, "pos")?;
+    let pos = BlockPosArgumentType::get_loaded_block_pos(context, "pos")?;
     let biome_arg = context.get_argument::<ResourceOrTag>("biome")?.clone();
 
     if let Some(ref world) = context.source.world {
