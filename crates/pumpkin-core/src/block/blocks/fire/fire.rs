@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use crate::block::blocks::tnt::TNTBlock;
 use crate::block::{
-    BlockBehaviour, BrokenArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs,
-    OnEntityCollisionArgs, OnScheduledTickArgs, PlacedArgs,
+    BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, OnEntityCollisionArgs,
+    OnScheduledTickArgs, PlacedArgs, PlayerWillDestroyArgs,
 };
 use crate::world::World;
 use crate::world::portal::nether::NetherPortal;
@@ -466,7 +466,7 @@ impl BlockBehaviour for FireBlock {
         }
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         {
             FireBlockBase::broken(args.world, *args.position);
         }

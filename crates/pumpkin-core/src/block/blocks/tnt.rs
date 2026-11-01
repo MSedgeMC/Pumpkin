@@ -15,8 +15,8 @@ use std::sync::Arc;
 use super::redstone::block_receives_redstone_power;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
-    BlockBehaviour, BrokenArgs, ExplodeArgs, OnNeighborUpdateArgs, OnProjectileHitArgs, PlacedArgs,
-    UseWithItemArgs,
+    BlockBehaviour, ExplodeArgs, OnNeighborUpdateArgs, OnProjectileHitArgs, PlacedArgs,
+    PlayerWillDestroyArgs, UseWithItemArgs,
 };
 use crate::entity::EntityBase;
 use crate::entity::tnt::TNTEntity;
@@ -155,12 +155,11 @@ impl BlockBehaviour for TNTBlock {
         }
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         if args.player.gamemode.load() != GameMode::Creative {
             let props = TntLikeProperties::from_state_id(args.state.id);
             if props.r#unstable {
-                // `break_block` already swapped the TNT away, so `prime` would find no TNT here.
-                Self::spawn_primed(args.world, args.position);
+                Self::prime(args.world, args.position);
             }
         }
     }

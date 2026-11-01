@@ -5,7 +5,9 @@ use pumpkin_macros::pumpkin_block;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_world::world::BlockAccessor;
 
-use crate::block::{BlockBehaviour, BrokenArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs};
+use crate::block::{
+    BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, PlayerWillDestroyArgs,
+};
 
 use super::FireBlockBase;
 use crate::block::OnEntityCollisionArgs;
@@ -47,7 +49,7 @@ impl BlockBehaviour for SoulFireBlock {
         Self::can_survive_at(args.block_accessor, args.position)
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         {
             FireBlockBase::broken(args.world, *args.position);
         }

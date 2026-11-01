@@ -5454,6 +5454,29 @@ impl World {
         cause: Option<&Arc<Player>>,
         flags: BlockFlags,
     ) -> Option<BlockStateId> {
+        self.break_block_inner(position, cause, flags, false)
+    }
+
+    /// Breaks a block because a player is mining it. Like vanilla
+    /// `ServerPlayerGameMode#destroyBlock`, this runs the block's
+    /// [`BlockBehaviour::player_will_destroy`] hook before the block is removed, so the hook can
+    /// still write this position's state and read its block entity.
+    pub fn player_break_block(
+        self: &Arc<Self>,
+        position: &BlockPos,
+        player: &Arc<Player>,
+        flags: BlockFlags,
+    ) -> Option<BlockStateId> {
+        self.break_block_inner(position, Some(player), flags, true)
+    }
+
+    fn break_block_inner(
+        self: &Arc<Self>,
+        position: &BlockPos,
+        cause: Option<&Arc<Player>>,
+        flags: BlockFlags,
+        player_will_destroy: bool,
+    ) -> Option<BlockStateId> {
         if let Some(player) = cause
             && self.is_in_spawn_protection(player, position)
         {
@@ -5498,6 +5521,18 @@ impl World {
             flags.remove(BlockFlags::SKIP_DROPS);
         } else {
             flags.insert(BlockFlags::SKIP_DROPS);
+        }
+
+        // Vanilla `ServerPlayerGameMode#destroyBlock` calls `playerWillDestroy` before
+        // `Level#removeBlock`, so the removal callbacks see the state it leaves behind.
+        if player_will_destroy && let Some(player) = cause {
+            self.block_registry.player_will_destroy(
+                self,
+                broken_block,
+                player,
+                position,
+                broken_block_state,
+            );
         }
 
         if !flags.contains(BlockFlags::SKIP_DROPS) {
@@ -6580,6 +6615,9 @@ impl World {
             self.level.read_chunk_sync(&chunk_pos, |chunk| {
                 chunk.mark_dirty(true);
             });
+            // Vanilla closes the menu on the next player tick, when `Container.stillValidBlockEntity`
+            // stops finding this block entity; the screen has to go when the container does.
+            self.close_container_screens_at(block_pos);
         }
     }
 

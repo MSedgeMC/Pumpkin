@@ -149,6 +149,13 @@ pub trait BlockBehaviour: Send + Sync {
     /// Called when a player starts digging this block, except in creative.
     fn attack(&self, _args: AttackArgs<'_>) {}
 
+    /// Called on the player break path before the block is removed, like vanilla
+    /// `BlockBehaviour#playerWillDestroy`. State written to `args.position` here is what the
+    /// removal callbacks and `broken` see, and the block entity is still there.
+    fn player_will_destroy(&self, _args: PlayerWillDestroyArgs<'_>) {}
+
+    /// Called after the block was removed by a player, like vanilla
+    /// `BlockBehaviour#playerDestroy`. The block entity is gone by now.
     fn broken(&self, _args: BrokenArgs<'_>) {}
 
     fn on_neighbor_update(&self, _args: OnNeighborUpdateArgs<'_>) {}
@@ -379,6 +386,14 @@ pub struct BrokenArgs<'a> {
     pub player: &'a Arc<Player>,
     pub position: &'a BlockPos,
     pub server: &'a Server,
+    pub world: &'a Arc<World>,
+    pub state: &'a BlockState,
+}
+
+pub struct PlayerWillDestroyArgs<'a> {
+    pub block: &'a Block,
+    pub player: &'a Arc<Player>,
+    pub position: &'a BlockPos,
     pub world: &'a Arc<World>,
     pub state: &'a BlockState,
 }

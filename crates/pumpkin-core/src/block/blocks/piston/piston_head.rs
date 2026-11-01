@@ -5,8 +5,8 @@ use pumpkin_util::GameMode;
 use pumpkin_world::world::BlockFlags;
 
 use crate::block::{
-    BlockBehaviour, BrokenArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs,
-    OnNeighborUpdateArgs, OnStateReplacedArgs, PathComputationType,
+    BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, OnNeighborUpdateArgs,
+    OnStateReplacedArgs, PathComputationType, PlayerWillDestroyArgs,
 };
 
 use super::piston::PistonProps;
@@ -36,7 +36,7 @@ impl PistonHeadBlock {
 }
 
 impl BlockBehaviour for PistonHeadBlock {
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         let props = PistonHeadProperties::from_state_id(args.state.id);
         let pos = args
             .position

@@ -208,7 +208,7 @@ use super::{
     AttackArgs, BrokenArgs, CanPlaceAtArgs, CanUpdateAtArgs, EmitsRedstonePowerArgs, ExplodeArgs,
     GetRedstonePowerArgs, GetStateForNeighborUpdateArgs, NormalUseArgs, OnNeighborUpdateArgs,
     OnPlaceArgs, OnStateReplacedArgs, OnSyncedBlockEventArgs, PlacedArgs, PlayerPlacedArgs,
-    PrepareArgs, UseWithItemArgs,
+    PlayerWillDestroyArgs, PrepareArgs, UseWithItemArgs,
 };
 use crate::block::blocks::blast_furnace::BlastFurnaceBlock;
 use crate::block::blocks::chain::ChainBlock;
@@ -1321,6 +1321,26 @@ impl BlockRegistry {
                 state,
                 position,
                 player,
+            });
+        }
+    }
+
+    pub fn player_will_destroy(
+        &self,
+        world: &Arc<World>,
+        block: &Block,
+        player: &Arc<Player>,
+        position: &BlockPos,
+        state: &BlockState,
+    ) {
+        let pumpkin_block = self.get_pumpkin_block(block.id);
+        if let Some(pumpkin_block) = pumpkin_block {
+            pumpkin_block.player_will_destroy(PlayerWillDestroyArgs {
+                block,
+                player,
+                position,
+                world,
+                state,
             });
         }
     }

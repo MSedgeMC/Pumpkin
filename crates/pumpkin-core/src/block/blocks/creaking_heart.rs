@@ -10,7 +10,9 @@ use pumpkin_macros::pumpkin_block;
 use pumpkin_world::world::BlockFlags;
 
 use crate::block::entities::creaking_heart::CreakingHeartBlockEntity;
-use crate::block::{BlockBehaviour, BrokenArgs, OnNeighborUpdateArgs, OnPlaceArgs, PlacedArgs};
+use crate::block::{
+    BlockBehaviour, OnNeighborUpdateArgs, OnPlaceArgs, PlacedArgs, PlayerWillDestroyArgs,
+};
 
 #[pumpkin_block("minecraft:creaking_heart")]
 pub struct CreakingHeartBlock;
@@ -108,7 +110,7 @@ impl BlockBehaviour for CreakingHeartBlock {
         }
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         args.world.play_sound(
             Sound::BlockCreakingHeartBreak,
             SoundCategory::Blocks,

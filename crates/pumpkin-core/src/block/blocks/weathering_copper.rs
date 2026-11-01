@@ -31,9 +31,9 @@ use crate::block::blocks::trapdoor::TrapDoorBlock;
 use crate::block::entities::copper_golem_statue::CopperGolemStatueBlockEntity;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
-    BlockBehaviour, BlockMetadata, BrokenArgs, CanPlaceAtArgs, CanUpdateAtArgs,
-    GetComparatorOutputArgs, GetStateForNeighborUpdateArgs, NormalUseArgs, OnNeighborUpdateArgs,
-    OnPlaceArgs, OnStateReplacedArgs, PathComputationType, PlacedArgs, RandomTickArgs,
+    BlockBehaviour, BlockMetadata, CanPlaceAtArgs, CanUpdateAtArgs, GetComparatorOutputArgs,
+    GetStateForNeighborUpdateArgs, NormalUseArgs, OnNeighborUpdateArgs, OnPlaceArgs,
+    OnStateReplacedArgs, PathComputationType, PlacedArgs, PlayerWillDestroyArgs, RandomTickArgs,
     UseWithItemArgs,
 };
 use crate::entity::EntityBase;
@@ -992,8 +992,8 @@ impl BlockBehaviour for WeatheringCopperDoorBlock {
         DoorBlock.placed(args);
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
-        DoorBlock.broken(args);
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
+        DoorBlock.player_will_destroy(args);
     }
 
     fn on_neighbor_update(&self, args: OnNeighborUpdateArgs<'_>) {

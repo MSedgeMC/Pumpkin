@@ -15,7 +15,6 @@ use pumpkin_world::world::BlockFlags;
 use std::sync::Arc;
 
 use crate::block::BlockBehaviour;
-use crate::block::BrokenArgs;
 use crate::block::CanPlaceAtArgs;
 use crate::block::GetStateForNeighborUpdateArgs;
 use crate::block::NormalUseArgs;
@@ -24,6 +23,7 @@ use crate::block::OnPlaceArgs;
 use crate::block::OnStateReplacedArgs;
 use crate::block::PathComputationType;
 use crate::block::PlacedArgs;
+use crate::block::PlayerWillDestroyArgs;
 use crate::block::blocks::redstone::block_receives_redstone_power;
 use crate::block::registry::BlockActionResult;
 use crate::entity::player::Player;
@@ -270,7 +270,7 @@ impl BlockBehaviour for DoorBlock {
         }
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         let door_props = DoorProperties::from_state_id(args.state.id);
         let other_half_pos = match door_props.half {
             DoubleBlockHalf::Upper => args.position.down(),

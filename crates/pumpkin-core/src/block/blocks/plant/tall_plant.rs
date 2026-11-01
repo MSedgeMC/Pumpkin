@@ -1,4 +1,4 @@
-use crate::block::{BonemealArgs, BrokenArgs, PlacedArgs};
+use crate::block::{BonemealArgs, PlacedArgs, PlayerWillDestroyArgs};
 use pumpkin_data::Block;
 use pumpkin_data::BlockDirection;
 use pumpkin_data::BlockId;
@@ -95,7 +95,7 @@ impl BlockBehaviour for TallPlantBlock {
         );
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         // When one half of a tall plant is broken, break the other half too
         let tall_plant_props = TallSeagrassLikeProperties::from_state_id(args.state.id);
         let other_block_pos = match tall_plant_props.half {

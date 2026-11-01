@@ -15,8 +15,8 @@ use crate::block::UpdateEntityMovementAfterFallOnArgs;
 use crate::block::bounce_entity_after_fall;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
-    BlockBehaviour, BrokenArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, NormalUseArgs,
-    OnPlaceArgs, OnStateReplacedArgs, PathComputationType, PlacedArgs,
+    BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, NormalUseArgs, OnPlaceArgs,
+    OnStateReplacedArgs, PathComputationType, PlacedArgs, PlayerWillDestroyArgs,
 };
 use crate::entity::{Entity, EntityBase, player::Player};
 use crate::world::World;
@@ -121,7 +121,7 @@ impl BlockBehaviour for BedBlock {
         }
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
+    fn player_will_destroy(&self, args: PlayerWillDestroyArgs<'_>) {
         let bed_props = BedProperties::from_state_id(args.state.id);
         let other_half_pos = if bed_props.part == BedPart::Head {
             args.position
