@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::entity::item::ItemEntity;
 use crate::entity::player::Player;
 use crate::entity::{Entity, EntityBase, living::LivingEntity};
 use crossbeam::atomic::AtomicCell;
@@ -243,6 +244,11 @@ impl ItemFrameEntity {
             item_serializer,
         );
 
+        let world = self.entity.world.load();
+        if !world.level_info.load().game_rules.entity_drops {
+            return;
+        }
+
         let is_creative_player = caused_by.is_some_and(|s| {
             s.cast_any()
                 .downcast_ref::<Player>()
@@ -253,19 +259,34 @@ impl ItemFrameEntity {
             return;
         }
 
-        let world = self.entity.world.load();
-        let pos = self.entity.block_pos.load();
-
         if with_frame {
-            world.drop_stack(&pos, self.get_frame_item_stack_with_data());
+            self.spawn_at_location(self.get_frame_item_stack_with_data());
         }
 
         if !item_stack.is_empty() {
             let drop_chance = self.item_drop_chance.load();
             if rand::random::<f32>() < drop_chance {
-                world.drop_stack(&pos, item_stack);
+                self.spawn_at_location(item_stack);
             }
         }
+    }
+
+    /// Vanilla `HangingEntity.spawnAtLocation`: hanging entities drop their
+    /// items 0.15 blocks out from the wall, along the facing.
+    fn spawn_at_location(&self, stack: ItemStack) {
+        let world = self.entity.world.load().clone();
+        let pos = self.entity.pos.load();
+        let step = self.get_facing().to_offset().to_f64();
+        let entity = Entity::new(
+            world.clone(),
+            Vector3::new(
+                step.x.mul_add(0.15, pos.x),
+                pos.y,
+                step.z.mul_add(0.15, pos.z),
+            ),
+            &EntityType::ITEM,
+        );
+        world.spawn_entity(Arc::new(ItemEntity::new(entity, stack)));
     }
 }
 
@@ -404,10 +425,13 @@ impl EntityBase for ItemFrameEntity {
         damage_type: DamageType,
         _position: Option<Vector3<f64>>,
         source: Option<&dyn EntityBase>,
-        _cause: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
     ) -> bool {
+        // Vanilla `ItemFrame.hurtServer` reads `DamageSource.getEntity()`, the
+        // causing entity: a creative player's arrow counts as that player.
+        let caused_by = cause.or(source);
         let fixed = self.is_fixed();
-        let is_creative_player = source.is_some_and(|s| {
+        let is_creative_player = caused_by.is_some_and(|s| {
             s.cast_any()
                 .downcast_ref::<Player>()
                 .is_some_and(Player::is_creative)
@@ -419,7 +443,7 @@ impl EntityBase for ItemFrameEntity {
             if !bypasses_invuln && !is_creative_player {
                 return false;
             }
-            self.drop_item(source, true);
+            self.drop_item(caused_by, true);
             self.entity.remove();
             return true;
         }
@@ -429,10 +453,10 @@ impl EntityBase for ItemFrameEntity {
             damage_type == DamageType::EXPLOSION || damage_type == DamageType::PLAYER_EXPLOSION;
 
         if !is_explosion && has_item {
-            self.drop_item(source, false);
+            self.drop_item(caused_by, false);
             self.entity.play_sound(self.get_remove_item_sound());
         } else {
-            self.drop_item(source, true);
+            self.drop_item(caused_by, true);
             self.entity.play_sound(self.get_break_sound());
             self.entity.remove();
         }
