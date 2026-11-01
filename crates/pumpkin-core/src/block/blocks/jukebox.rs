@@ -4,12 +4,13 @@ use crate::block::entities::jukebox::JukeboxBlockEntity;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
     BlockBehaviour, BrokenArgs, EmitsRedstonePowerArgs, GetComparatorOutputArgs,
-    GetRedstonePowerArgs, NormalUseArgs, OnStateReplacedArgs, PlacedArgs, UseWithItemArgs,
+    GetRedstonePowerArgs, NormalUseArgs, OnStateReplacedArgs, PlacedArgs, PlayerPlacedArgs,
+    UseWithItemArgs,
 };
 use crate::entity::Entity;
 use crate::entity::item::ItemEntity;
 use crate::world::World;
-use pumpkin_data::data_component_impl::JukeboxPlayableImpl;
+use pumpkin_data::data_component_impl::{BlockEntityDataImpl, JukeboxPlayableImpl};
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::jukebox_song::JukeboxSong;
 use pumpkin_data::world::WorldEvent;
@@ -24,6 +25,9 @@ use tracing::error;
 
 #[pumpkin_block("minecraft:jukebox")]
 pub struct JukeboxBlock;
+
+/// Vanilla `JukeboxBlockEntity.SONG_ITEM_TAG_ID`, the tag `JukeboxBlock.setPlacedBy` looks for.
+const SONG_ITEM_TAG_ID: &str = "RecordItem";
 
 impl JukeboxBlock {
     fn has_record_state(_block: &Block, state_id: BlockStateId) -> bool {
@@ -80,6 +84,27 @@ impl BlockBehaviour for JukeboxBlock {
     fn placed(&self, args: PlacedArgs<'_>) {
         let block_entity = JukeboxBlockEntity::new(*args.position);
         args.world.add_block_entity(Arc::new(block_entity));
+    }
+
+    /// Vanilla: `JukeboxBlock.setPlacedBy()` - the block entity data of the placed stack is
+    /// applied first, so a jukebox placed with a record needs `HAS_RECORD` set here.
+    fn player_placed(&self, args: PlayerPlacedArgs<'_>) {
+        let has_record = args.item_stack.is_some_and(|stack| {
+            stack
+                .get_data_component::<BlockEntityDataImpl>()
+                .is_some_and(|data| data.nbt.has(SONG_ITEM_TAG_ID))
+        });
+
+        if has_record {
+            let mut props = JukeboxLikeProperties::from_state_id(args.state_id);
+            props.has_record = true;
+            // Vanilla: `level.setBlock(pos, state.setValue(HAS_RECORD, true), 2)`
+            args.world.set_block_state(
+                args.position,
+                props.to_state_id(args.block),
+                BlockFlags::NOTIFY_LISTENERS,
+            );
+        }
     }
 
     /// Called when player right-clicks with empty hand or non-disc item

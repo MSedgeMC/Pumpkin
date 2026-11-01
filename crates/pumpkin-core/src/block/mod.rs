@@ -354,6 +354,8 @@ pub struct PlayerPlacedArgs<'a> {
     pub position: &'a BlockPos,
     pub direction: BlockDirection,
     pub player: &'a Player,
+    /// The stack the block was placed from, like vanilla's `setPlacedBy` `itemStack`.
+    pub item_stack: Option<&'a ItemStack>,
 }
 
 pub struct OnLandedUponArgs<'a> {

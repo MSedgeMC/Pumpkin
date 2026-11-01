@@ -900,6 +900,7 @@ impl BlockRegistry {
             &final_block_pos,
             face,
             player,
+            held_stack.as_ref(),
         );
 
         player.trigger_advancement(
@@ -1218,6 +1219,7 @@ impl BlockRegistry {
         position: &BlockPos,
         direction: BlockDirection,
         player: &Player,
+        item_stack: Option<&ItemStack>,
     ) {
         let pumpkin_block = self.get_pumpkin_block(block.id);
         if let Some(pumpkin_block) = pumpkin_block {
@@ -1228,6 +1230,7 @@ impl BlockRegistry {
                 position,
                 direction,
                 player,
+                item_stack,
             });
         }
     }
