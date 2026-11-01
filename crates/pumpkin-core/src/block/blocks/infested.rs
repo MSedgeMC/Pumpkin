@@ -5,10 +5,10 @@ use pumpkin_data::{
     block_properties::{Axis, PaleOakWoodLikeProperties},
     entity::EntityType,
 };
-use pumpkin_util::{GameMode, math::vector3::Vector3};
+use pumpkin_util::math::vector3::Vector3;
 
 use crate::{
-    block::{BlockBehaviour, BlockMetadata, BrokenArgs, OnPlaceArgs},
+    block::{BlockBehaviour, BlockMetadata, OnPlaceArgs, SpawnAfterBreakArgs},
     entity::Entity,
 };
 
@@ -64,16 +64,12 @@ impl BlockBehaviour for InfestedBlock {
         }
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
-        // TODO: ugly fix, use onStacksDropped
-        if args.player.gamemode.load() == GameMode::Creative
-            || !args.world.level_info.load().game_rules.block_drops
-            || args
-                .player
-                .inventory()
-                .held_item()
-                .get_enchantment_level(&Enchantment::SILK_TOUCH)
-                > 0
+    fn spawn_after_break(&self, args: SpawnAfterBreakArgs<'_>) {
+        if !args.world.level_info.load().game_rules.block_drops
+            || args.tool.is_some_and(|tool| {
+                // Silk touch is what `EnchantmentTags.PREVENTS_INFESTED_SPAWNS` contains.
+                tool.get_enchantment_level(&Enchantment::SILK_TOUCH) > 0
+            })
         {
             return;
         }

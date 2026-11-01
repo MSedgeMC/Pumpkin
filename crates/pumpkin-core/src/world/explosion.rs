@@ -542,6 +542,12 @@ impl Explosion {
                     let pumpkin_block = world.block_registry.get_pumpkin_block(block.id);
 
                     if pumpkin_block.is_none_or(|s| s.should_drop_items_on_explosion()) {
+                        // Vanilla `BlockBehaviour#onExplosionHit` passes an empty tool and only asks
+                        // for experience when the explosion's indirect source is a player. Pumpkin's
+                        // explosions carry no source to test (see the `owner` TODO on `TNTEntity`).
+                        world
+                            .block_registry
+                            .spawn_after_break(world, block, state, pos, None, false);
                         let is_raining = world.is_raining();
                         let is_thundering = world.is_thundering();
                         let params = LootContextParameters {

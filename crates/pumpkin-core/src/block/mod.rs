@@ -151,6 +151,10 @@ pub trait BlockBehaviour: Send + Sync {
 
     fn broken(&self, _args: BrokenArgs<'_>) {}
 
+    /// Called after the block was broken, with the tool that broke it, like vanilla
+    /// `BlockBehaviour#spawnAfterBreak`.
+    fn spawn_after_break(&self, _args: SpawnAfterBreakArgs<'_>) {}
+
     fn on_neighbor_update(&self, _args: OnNeighborUpdateArgs<'_>) {}
 
     /// Called if a block state is replaced or it replaces another state
@@ -381,6 +385,17 @@ pub struct BrokenArgs<'a> {
     pub server: &'a Server,
     pub world: &'a Arc<World>,
     pub state: &'a BlockState,
+}
+
+pub struct SpawnAfterBreakArgs<'a> {
+    pub world: &'a Arc<World>,
+    pub block: &'a Block,
+    pub state: &'a BlockState,
+    pub position: &'a BlockPos,
+    /// The tool that broke the block, empty (`None`) for explosions and other non-player breaks.
+    pub tool: Option<&'a ItemStack>,
+    /// Vanilla `dropExperience`: only player breaks and player-caused explosions ask for it.
+    pub drop_experience: bool,
 }
 
 pub struct OnNeighborUpdateArgs<'a> {

@@ -11,6 +11,7 @@ mod dispensers_and_droppers_extended;
 mod doors_and_gates;
 mod doors_trapdoors_gates_variants;
 mod entities_and_ai;
+mod explosions;
 mod fluids_and_sponge;
 mod furnace_smelting;
 mod golems;
@@ -250,6 +251,7 @@ const BUILTIN_TEST_IDS: &[&str] = &[
     "pumpkin:iron_golem_pattern_clears_all_four_blocks",
     "pumpkin:different_item_entities_do_not_merge",
     "pumpkin:item_entities_stack_up_to_combined_count",
+    "pumpkin:tnt_blast_spawns_silverfish_from_infested_stone",
 ];
 
 #[must_use]
@@ -1655,6 +1657,13 @@ pub fn ensure_builtin_game_tests_registered() {
             60,
             0,
             commands_and_entities_extended::test_falling_anvil_lands_and_preserves_block,
+        );
+        register_function_test(
+            "pumpkin:tnt_blast_spawns_silverfish_from_infested_stone",
+            "pumpkin:empty_5x4x5",
+            120,
+            0,
+            explosions::test_tnt_blast_spawns_silverfish_from_infested_stone,
         );
     });
 }

@@ -5500,6 +5500,30 @@ impl World {
             flags.insert(BlockFlags::SKIP_DROPS);
         }
 
+        // Vanilla reaches `spawnAfterBreak` through `Block#playerDestroy` and `Level#destroyBlock`.
+        let spawn_after_break = match cause {
+            // `Level#destroyBlock` spawns after break whenever the break drops resources.
+            None => !flags.contains(BlockFlags::SKIP_DROPS),
+            // `ServerPlayerGameMode#destroyBlock` skips `playerDestroy` for players that prevent
+            // drops or lack the tool. The flags cannot stand in for that check: they are cleared
+            // for creative players whose block entities drop.
+            Some(player) => {
+                player.gamemode.load() != pumpkin_util::GameMode::Creative
+                    && player.can_harvest(broken_block_state, broken_block)
+            }
+        };
+        if spawn_after_break {
+            let tool = cause.map(|player| player.inventory().held_item());
+            self.block_registry.spawn_after_break(
+                self,
+                broken_block,
+                broken_block_state,
+                position,
+                tool.as_ref().filter(|item| !item.is_empty()),
+                true,
+            );
+        }
+
         if !flags.contains(BlockFlags::SKIP_DROPS) {
             let tool = cause.as_ref().and_then(|p| {
                 let item = p.inventory().held_item();
