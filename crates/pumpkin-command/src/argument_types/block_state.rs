@@ -91,8 +91,17 @@ fn read_properties(
     reader: &mut StringReader,
     block: &'static Block,
 ) -> Result<BlockStateId, CommandSyntaxError> {
+    read_properties_with_defined(reader, block).map(|(state_id, _)| state_id)
+}
+
+/// `read_properties`'s parse, also returning the properties the input sets. A predicate only
+/// compares those, which is what vanilla's `BlockStateParser.BlockResult.properties` carries.
+pub fn read_properties_with_defined(
+    reader: &mut StringReader,
+    block: &'static Block,
+) -> Result<(BlockStateId, Vec<Property>), CommandSyntaxError> {
     if reader.peek() != Some(SYNTAX_START_PROPERTIES) {
-        return Ok(block.default_state.id);
+        return Ok((block.default_state.id, Vec::new()));
     }
 
     // Vanilla starts from the default state and only overrides the properties it reads.
@@ -100,6 +109,7 @@ fn read_properties(
         .properties(block.default_state.id)
         .map_or_else(Vec::new, |properties| properties.to_props());
     let mut defined_keys = Vec::new();
+    let mut defined = Vec::new();
 
     reader.skip();
     reader.skip_whitespace();
@@ -155,6 +165,7 @@ fn read_properties(
             ));
         };
         properties[index] = property;
+        defined.push(property);
 
         reader.skip_whitespace();
         if reader.can_read_char() {
@@ -174,7 +185,10 @@ fn read_properties(
         return Err(ERROR_EXPECTED_END_OF_PROPERTIES.create(reader));
     }
 
-    Ok(block.from_properties(&properties).to_state_id(block))
+    Ok((
+        block.from_properties(&properties).to_state_id(block),
+        defined,
+    ))
 }
 
 /// Looks up the property a block state actually holds, which is what validates the value:

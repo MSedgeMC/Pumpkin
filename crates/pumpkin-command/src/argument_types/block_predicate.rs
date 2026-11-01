@@ -7,7 +7,8 @@ use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::text::TextComponent;
 
 use crate::argument_types::argument_type::{ArgumentType, JavaClientArgumentType};
-use crate::argument_types::block::INVALID_BLOCK_ERROR_TYPE;
+use crate::argument_types::block::read_block;
+use crate::argument_types::block_state::read_properties_with_defined;
 use crate::argument_types::nbt::NbtCompoundArgumentType;
 use crate::argument_types::nbt_path::compare_nbt;
 use crate::context::command_context::CommandContext;
@@ -105,7 +106,10 @@ impl BlockPredicate {
     }
 }
 
-fn parse_properties(
+/// Parses `[property=value]` for a block tag. Vanilla reads these as vague properties
+/// (`BlockStateParser.readVagueProperties`) and only rejects them while testing a block, when the
+/// block state has no such property or value (vanilla's `BlockPredicateArgument.TagPredicate`).
+fn parse_vague_properties(
     reader: &mut StringReader,
 ) -> Result<HashMap<String, String>, CommandSyntaxError> {
     let mut properties = HashMap::new();
@@ -201,7 +205,7 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for BlockPredicateArgument
                 }
             };
 
-            let properties = parse_properties(reader)?;
+            let properties = parse_vague_properties(reader)?;
             let nbt = parse_nbt(reader)?;
 
             Ok(BlockPredicate::Tag {
@@ -211,26 +215,17 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for BlockPredicateArgument
                 nbt,
             })
         } else {
-            let start = reader.cursor();
-            while let Some(c) = reader.peek() {
-                if c.is_alphanumeric() || c == '_' || c == ':' || c == '/' || c == '.' || c == '-' {
-                    reader.skip();
-                } else {
-                    break;
-                }
-            }
-            let block_str = &reader.string()[start..reader.cursor()];
-            let normalized = if block_str.contains(':') {
-                block_str.to_string()
-            } else {
-                format!("minecraft:{block_str}")
-            };
-
-            let block = Block::from_name(&normalized).ok_or_else(|| {
-                INVALID_BLOCK_ERROR_TYPE.create(reader, TextComponent::text(normalized))
-            })?;
-
-            let properties = parse_properties(reader)?;
+            let block = read_block(reader)?;
+            let (_, defined) = read_properties_with_defined(reader, block)?;
+            let properties = defined
+                .into_iter()
+                .map(|property| {
+                    (
+                        property.key_str().to_string(),
+                        property.value_str().to_string(),
+                    )
+                })
+                .collect();
             let nbt = parse_nbt(reader)?;
 
             Ok(BlockPredicate::Block {
@@ -270,5 +265,54 @@ impl BlockPredicateArgumentType {
         name: &str,
     ) -> Result<BlockPredicate, CommandSyntaxError> {
         Ok(context.get_argument::<BlockPredicate>(name)?.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::argument_types::block_state::{ERROR_INVALID_VALUE, ERROR_UNKNOWN_PROPERTY};
+    use crate::source::DummySource;
+    use pumpkin_data::block_properties::{SlabProperties, SlabType};
+
+    fn parse(input: &str) -> Result<BlockPredicate, CommandSyntaxError> {
+        let mut reader = StringReader::new(input);
+        ArgumentType::<DummySource>::parse(&BlockPredicateArgumentType, &mut reader)
+    }
+
+    #[test]
+    fn invalid_properties_are_rejected() {
+        assert!(
+            parse("oak_slab[sideways=up]")
+                .unwrap_err()
+                .is(&ERROR_UNKNOWN_PROPERTY)
+        );
+        assert!(
+            parse("oak_slab[type=sideways]")
+                .unwrap_err()
+                .is(&ERROR_INVALID_VALUE)
+        );
+    }
+
+    #[test]
+    fn only_the_given_properties_have_to_match() {
+        let top = SlabProperties {
+            r#type: SlabType::Top,
+            r#waterlogged: false,
+        }
+        .to_state_id(&Block::OAK_SLAB);
+        let bottom = SlabProperties {
+            r#type: SlabType::Bottom,
+            r#waterlogged: false,
+        }
+        .to_state_id(&Block::OAK_SLAB);
+
+        let any_slab = parse("oak_slab").unwrap();
+        assert!(any_slab.test(top, || None));
+        assert!(any_slab.test(bottom, || None));
+
+        let top_slab = parse("oak_slab[type=top]").unwrap();
+        assert!(top_slab.test(top, || None));
+        assert!(!top_slab.test(bottom, || None));
     }
 }
