@@ -168,6 +168,39 @@ fn extract_u16_array(tag: &pumpkin_nbt::tag::NbtTag) -> Option<Box<[BlockStateId
     }
 }
 
+/// The tag `BlockState.CODEC` writes for one state: a bare block name for a default state and an
+/// `id` plus `properties` compound for any other (`BlockState.java:14`, `StateHolder.java:18`).
+/// `extract_u16_array` still reads the `Name`/`Properties` keys Pumpkin wrote before 26.3.
+fn block_state_tag(state_id: BlockStateId) -> pumpkin_nbt::tag::NbtTag {
+    use pumpkin_nbt::tag::NbtTag;
+
+    let block = Block::from_state_id(state_id);
+    // `Block::name` has no namespace, and the block codec only parses namespaced identifiers.
+    let name = if block.name.starts_with("minecraft:") {
+        block.name.to_string()
+    } else {
+        format!("minecraft:{}", block.name)
+    };
+
+    if block.default_state.id == state_id {
+        return NbtTag::String(name.into());
+    }
+
+    let mut compound = NbtCompound::new();
+    compound.put_string("id", name);
+    if let Some(props) = block.properties(state_id) {
+        let prop_vec = props.to_props();
+        if !prop_vec.is_empty() {
+            let mut props_comp = NbtCompound::new();
+            for p in prop_vec {
+                props_comp.put_string(p.key_str(), p.value_str().to_string());
+            }
+            compound.put_compound("properties", props_comp);
+        }
+    }
+    NbtTag::Compound(compound)
+}
+
 fn extract_u8_array(tag: &pumpkin_nbt::tag::NbtTag) -> Option<Box<[u8]>> {
     match tag {
         pumpkin_nbt::tag::NbtTag::ByteArray(arr) => Some(arr.iter().map(|&x| x as u8).collect()),
@@ -582,27 +615,7 @@ impl ChunkData {
             let palette_tags: Vec<NbtTag> = block_states_nbt
                 .palette
                 .iter()
-                .map(|&id| {
-                    let block = Block::from_state_id(id);
-                    let mut comp = NbtCompound::new();
-                    let name = if block.name.starts_with("minecraft:") {
-                        block.name.to_string()
-                    } else {
-                        format!("minecraft:{}", block.name)
-                    };
-                    comp.put_string("Name", name);
-                    if let Some(props) = block.properties(id) {
-                        let prop_vec = props.to_props();
-                        if !prop_vec.is_empty() {
-                            let mut props_comp = NbtCompound::new();
-                            for p in prop_vec {
-                                props_comp.put_string(p.key_str(), p.value_str().to_string());
-                            }
-                            comp.put_compound("Properties", props_comp);
-                        }
-                    }
-                    NbtTag::Compound(comp)
-                })
+                .map(|&id| block_state_tag(id))
                 .collect();
             bs_comp.put_list("palette", palette_tags);
             section_comp.put_compound("block_states", bs_comp);
@@ -1665,6 +1678,90 @@ mod tests {
             ])
             .to_state_id(&Block::REPEATER);
         assert_eq!(result[1], repeater_state);
+    }
+
+    #[test]
+    fn section_palette_is_saved_in_the_block_state_codec_shape() {
+        use crate::chunk::ChunkData;
+        use pumpkin_data::block_properties::Axis;
+        use pumpkin_util::math::vector2::Vector2;
+
+        let log_state = Block::OAK_LOG
+            .from_properties(&[pumpkin_data::Property::Axis(Axis::X)])
+            .to_state_id(&Block::OAK_LOG);
+
+        // What Pumpkin wrote before 26.3: every entry a compound with `Name`/`Properties`.
+        let mut stone = NbtCompound::new();
+        stone.put_string("Name", "minecraft:stone".to_string());
+        let mut log = NbtCompound::new();
+        log.put_string("Name", "minecraft:oak_log".to_string());
+        let mut properties = NbtCompound::new();
+        properties.put_string("axis", "x".to_string());
+        log.put_compound("Properties", properties);
+
+        let mut block_states = NbtCompound::new();
+        block_states.put(
+            "palette",
+            NbtTag::List(vec![NbtTag::Compound(stone), NbtTag::Compound(log)]),
+        );
+        // Two palette entries pack four bits each, so this is 4096 copies of index 1.
+        block_states.put("data", NbtTag::LongArray(vec![1; 256]));
+
+        let mut section = NbtCompound::new();
+        section.put_int("Y", 0);
+        section.put("block_states", NbtTag::Compound(block_states));
+        let mut biomes = NbtCompound::new();
+        biomes.put(
+            "palette",
+            NbtTag::List(vec![NbtTag::String("minecraft:plains".into())]),
+        );
+        section.put("biomes", NbtTag::Compound(biomes));
+
+        let chunk = ChunkData::from_bytes(&test_chunk(vec![section]).write(), Vector2::new(0, 0))
+            .expect("legacy palette parses");
+        assert_eq!(
+            chunk.section.get_block_absolute_y(0, 0, 0),
+            Some(log_state),
+            "the keys Pumpkin wrote before 26.3 still load"
+        );
+
+        // Saving rewrites the palette the way vanilla's `BlockState.CODEC` writes it.
+        let saved = chunk.internal_to_bytes();
+        let mut cursor = std::io::Cursor::new(saved.as_ref());
+        let mut reader = pumpkin_nbt::deserializer::NbtReadHelperJava::new(&mut cursor);
+        let root = pumpkin_nbt::Nbt::read(&mut reader)
+            .expect("the saved chunk is valid nbt")
+            .root_tag;
+        let sections = root.get_list("sections").expect("chunk lists its sections");
+        let NbtTag::Compound(saved_section) = &sections[0] else {
+            panic!("a section is a compound");
+        };
+        let palette = saved_section
+            .get_compound("block_states")
+            .and_then(|block_states| block_states.get_list("palette"))
+            .expect("the section has a block palette");
+        assert_eq!(
+            palette[0],
+            NbtTag::String("minecraft:stone".into()),
+            "a default state is a bare block name"
+        );
+        let NbtTag::Compound(log_entry) = &palette[1] else {
+            panic!("a state that carries properties is a compound");
+        };
+        assert_eq!(log_entry.get_string("id"), Some("minecraft:oak_log"));
+        assert_eq!(
+            log_entry
+                .get_compound("properties")
+                .and_then(|properties| properties.get_string("axis")),
+            Some("x")
+        );
+
+        let reloaded = ChunkData::from_bytes(&saved, Vector2::new(0, 0))
+            .expect("the chunk it just wrote parses");
+        assert_eq!(
+            reloaded.section.get_block_absolute_y(0, 0, 0),
+            Some(log_state)
+        );
     }
 
     #[test]
