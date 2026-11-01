@@ -596,6 +596,79 @@ pub fn can_support_center(
     state.is_center_solid(direction)
 }
 
+/// Vanilla `Block.pushEntitiesUp`: lifts entities out of the collision volume that
+/// `new_state` adds at `pos` compared to the current `state`, so a block that just
+/// became solid does not swallow whatever stood in it.
+pub fn push_entities_up(
+    world: &Arc<World>,
+    pos: &BlockPos,
+    state: &BlockState,
+    new_state: &BlockState,
+) {
+    // Vanilla `Shapes.joinUnoptimized(state.getCollisionShape(..),
+    // newState.getCollisionShape(..), ONLY_SECOND)` moved to `pos`: the part of the new
+    // collision volume the old state did not fill.
+    let old_shapes: Vec<BoundingBox> = state
+        .get_block_collision_shapes_at(pos)
+        .map(|shape| shape.at_pos(*pos))
+        .collect();
+    let mut offset_shapes: Vec<BoundingBox> = Vec::new();
+    for shape in new_state.get_block_collision_shapes_at(pos) {
+        let mut pieces = vec![shape.at_pos(*pos)];
+        for old_shape in &old_shapes {
+            pieces = pieces
+                .iter()
+                .flat_map(|piece| piece.subtract(old_shape))
+                .collect();
+        }
+        offset_shapes.extend(pieces);
+    }
+    let Some(first) = offset_shapes.first() else {
+        return;
+    };
+
+    let mut bounds = *first;
+    for shape in &offset_shapes[1..] {
+        bounds = BoundingBox::new(
+            Vector3::new(
+                bounds.min.x.min(shape.min.x),
+                bounds.min.y.min(shape.min.y),
+                bounds.min.z.min(shape.min.z),
+            ),
+            Vector3::new(
+                bounds.max.x.max(shape.max.x),
+                bounds.max.y.max(shape.max.y),
+                bounds.max.z.max(shape.max.z),
+            ),
+        );
+    }
+
+    // Vanilla `Shapes.collide(Axis.Y, box.move(0, 1, 0), offset, -1.0)` with the result
+    // fed to `teleportRelative(0, 1 + offset, 0)`: an entity lands on the highest offset
+    // surface overlapping it, and is never lifted by more than the one block it was moved.
+    for entity in world.get_all_at_box(&bounds) {
+        let entity_data = entity.get_entity();
+        let entity_box = entity_data.bounding_box.load();
+        let lift = offset_shapes
+            .iter()
+            .filter(|shape| {
+                shape.min.x < entity_box.max.x
+                    && shape.max.x > entity_box.min.x
+                    && shape.min.z < entity_box.max.z
+                    && shape.max.z > entity_box.min.z
+            })
+            .map(|shape| shape.max.y - entity_box.min.y)
+            .filter(|lift| *lift <= 1.0)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if lift <= 0.0 {
+            continue;
+        }
+        let mut position = entity_data.pos.load();
+        position.y += lift;
+        entity.teleport(position, None, None, world.clone());
+    }
+}
+
 /// Vanilla `AbstractContainerMenu.getRedstoneSignalFromBlockEntity`: read a block
 /// entity's own inventory as a comparator would.
 #[must_use]
