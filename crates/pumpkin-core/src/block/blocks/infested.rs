@@ -3,8 +3,9 @@ use std::sync::Arc;
 use pumpkin_data::{
     Block, BlockId, BlockState, BlockStateId, Enchantment, Rotation,
     block_properties::{Axis, PaleOakWoodLikeProperties},
-    entity::EntityType,
+    entity::{EntityStatus, EntityType},
 };
+use pumpkin_protocol::bedrock::server::ActorEventID;
 use pumpkin_util::{GameMode, math::vector3::Vector3};
 
 use crate::{
@@ -82,8 +83,20 @@ impl BlockBehaviour for InfestedBlock {
             f64::from(args.position.0.y),
             f64::from(args.position.0.z) + 0.5,
         );
-        let entity = Entity::new(args.world.clone(), pos, &EntityType::SILVERFISH);
+        let entity = Arc::new(Entity::new(
+            args.world.clone(),
+            pos,
+            &EntityType::SILVERFISH,
+        ));
 
-        args.world.spawn_entity(Arc::new(entity));
+        args.world.spawn_entity(entity.clone());
+        // Vanilla creates the silverfish with `EntitySpawnReason.TRIGGERED` (unused in 26.3, its
+        // `EntityType.create` only runs a `canSpawn` gate) and then calls `Mob.spawnAnim`: entity
+        // event 20, which clients answer with the spawn poof.
+        args.world.send_entity_status(
+            &entity,
+            EntityStatus::SilverfishMergeAnim,
+            ActorEventID::None,
+        );
     }
 }
