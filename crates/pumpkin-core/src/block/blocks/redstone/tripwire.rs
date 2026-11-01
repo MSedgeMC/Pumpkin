@@ -12,7 +12,7 @@ use crate::{
         OnEntityCollisionArgs, OnPlaceArgs, OnScheduledTickArgs, OnStateReplacedArgs, PlacedArgs,
     },
     entity::EntityBase,
-    world::World,
+    world::{World, game_event::GameEventContext},
 };
 
 use super::tripwire_hook::TripwireHookBlock;
@@ -101,9 +101,12 @@ impl BlockBehaviour for TripwireBlock {
                 props.to_state_id(args.block),
                 BlockFlags::empty(),
             );
-            args.world.emit_game_event(
+            args.world.emit_game_event_with_context(
                 pumpkin_data::game_event::GameEvent::Shear.name(),
                 args.position.to_centered_f64(),
+                &GameEventContext {
+                    source_entity: Some(args.player.as_ref()),
+                },
             );
             // TODO: Deduct 1 durability from held shears (skip in Creative mode).
         }
