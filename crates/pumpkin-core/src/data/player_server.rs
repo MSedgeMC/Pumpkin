@@ -144,8 +144,11 @@ impl ServerPlayerData {
             }
             Err(e) => {
                 if self.storage.is_save_enabled() {
-                    // Only log as error if player data saving is enabled
-                    error!("Error loading player data for {uuid}: {e}");
+                    // Only log as error if player data saving is enabled. The storage layer
+                    // copies an unreadable file aside, so the old data is not lost silently.
+                    error!(
+                        "Failed to load player data for {uuid}, starting with default data: {e}"
+                    );
                 } else {
                     // Otherwise just log as info since it's expected
                     debug!("Not loading player data for {uuid} (saving disabled)");

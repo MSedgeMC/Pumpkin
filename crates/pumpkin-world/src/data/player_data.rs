@@ -2,8 +2,10 @@ use pumpkin_nbt::compound::NbtCompound;
 use std::fs::{File, create_dir_all};
 use std::io;
 use std::path::PathBuf;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
+
+const PLAYER_DATA_SUFFIX: &str = ".dat";
 
 /// Manages the storage and retrieval of player data from disk and memory cache.
 ///
@@ -60,7 +62,42 @@ impl PlayerDataStorage {
     /// Returns the path for a player's data file based on their UUID.
     #[must_use]
     pub fn get_player_data_path(&self, uuid: &Uuid) -> PathBuf {
-        self.get_data_path().join(format!("{uuid}.dat"))
+        self.get_data_path()
+            .join(format!("{uuid}{PLAYER_DATA_SUFFIX}"))
+    }
+
+    /// Copies an unreadable player data file aside, mirroring vanilla's `PlayerDataStorage.backup`.
+    ///
+    /// The next save replaces the original file, so without this copy a corrupted
+    /// inventory would be gone for good.
+    fn backup(&self, uuid: &Uuid) {
+        let path = self.get_player_data_path(uuid);
+        if !path.is_file() {
+            return;
+        }
+
+        // The timestamp format is vanilla's `FileNameDateFormatter.FORMATTER`.
+        let now = time::OffsetDateTime::now_utc();
+        let timestamp = format!(
+            "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
+            now.year(),
+            now.month() as u8,
+            now.day(),
+            now.hour(),
+            now.minute(),
+            now.second()
+        );
+        let backup_path = self
+            .get_data_path()
+            .join(format!("{uuid}_corrupted_{timestamp}{PLAYER_DATA_SUFFIX}"));
+
+        match std::fs::copy(&path, &backup_path) {
+            Ok(_) => warn!(
+                "Copied the unreadable player data for {uuid} to {}",
+                backup_path.display()
+            ),
+            Err(e) => warn!("Failed to copy the player data file for {uuid}: {e}"),
+        }
     }
 
     /// Loads player data from NBT file or cache.
@@ -92,6 +129,7 @@ impl PlayerDataStorage {
             Ok(file) => file,
             Err(e) => {
                 error!("Failed to open player data file for {uuid}: {e}");
+                self.backup(uuid);
                 return Err(PlayerDataError::Io(e));
             }
         };
@@ -103,6 +141,7 @@ impl PlayerDataStorage {
             }
             Err(e) => {
                 error!("Failed to read player data for {uuid}: {e}");
+                self.backup(uuid);
                 Err(PlayerDataError::Nbt(e.to_string()))
             }
         }
@@ -153,5 +192,36 @@ impl PlayerDataStorage {
                 Err(PlayerDataError::Io(e))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn unreadable_player_data_is_kept_as_a_backup() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = PlayerDataStorage::new(temp_dir.path(), true);
+        let uuid = Uuid::new_v4();
+
+        let corrupt = b"not a gzip file".as_slice();
+        File::create(storage.get_player_data_path(&uuid))
+            .unwrap()
+            .write_all(corrupt)
+            .unwrap();
+
+        assert!(storage.load_player_data(&uuid).is_err());
+
+        let prefix = format!("{uuid}_corrupted_");
+        let backups: Vec<_> = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .collect();
+
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(backups[0].path()).unwrap(), corrupt);
     }
 }
