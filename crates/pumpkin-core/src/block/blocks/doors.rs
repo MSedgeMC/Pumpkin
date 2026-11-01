@@ -26,10 +26,11 @@ use crate::block::PathComputationType;
 use crate::block::PlacedArgs;
 use crate::block::blocks::redstone::block_receives_redstone_power;
 use crate::block::registry::BlockActionResult;
+use crate::entity::EntityBase;
 use crate::entity::player::Player;
 use pumpkin_protocol::java::server::play::SUseItemOn;
 
-use crate::world::World;
+use crate::world::{World, game_event::GameEventContext};
 use pumpkin_util::GameMode;
 
 type DoorProperties = pumpkin_data::block_properties::OakDoorLikeProperties;
@@ -61,7 +62,13 @@ fn toggle_door(player: &Player, world: &Arc<World>, block_pos: &BlockPos) {
     } else {
         pumpkin_data::game_event::GameEvent::BlockClose
     };
-    world.emit_game_event(game_event.name(), block_pos.to_centered_f64());
+    world.emit_game_event_with_context(
+        game_event.name(),
+        block_pos.to_centered_f64(),
+        &GameEventContext {
+            source_entity: Some(player),
+        },
+    );
 
     world.set_block_state(
         block_pos,
@@ -177,7 +184,12 @@ impl DoorBlock {
         door_props.open
     }
 
-    pub fn set_open(world: &Arc<World>, block_pos: &BlockPos, open: bool) {
+    pub fn set_open(
+        world: &Arc<World>,
+        block_pos: &BlockPos,
+        open: bool,
+        source_entity: Option<&dyn EntityBase>,
+    ) {
         let (block, block_state) = world.get_block_and_state_id(block_pos);
         if !block.has_tag(&tag::Block::MINECRAFT_DOORS) {
             return;
@@ -203,7 +215,11 @@ impl DoorBlock {
         } else {
             pumpkin_data::game_event::GameEvent::BlockClose
         };
-        world.emit_game_event(game_event.name(), block_pos.to_centered_f64());
+        world.emit_game_event_with_context(
+            game_event.name(),
+            block_pos.to_centered_f64(),
+            &GameEventContext { source_entity },
+        );
 
         world.set_block_state(
             block_pos,
