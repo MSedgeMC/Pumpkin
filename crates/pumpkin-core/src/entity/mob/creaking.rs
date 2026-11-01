@@ -480,9 +480,13 @@ impl Mob for CreakingEntity {
     }
 
     fn pre_damage(&self, damage_type: DamageType, _source: Option<&dyn EntityBase>) -> bool {
+        use pumpkin_data::tag::{self, Taggable};
+
         let entity = &self.mob_entity.living_entity.entity;
 
-        if self.is_heart_bound() && damage_type != DamageType::OUT_OF_WORLD {
+        if self.is_heart_bound()
+            && !damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_INVULNERABILITY)
+        {
             if self
                 .invulnerability_animation_remaining_ticks
                 .load(Ordering::Relaxed)
