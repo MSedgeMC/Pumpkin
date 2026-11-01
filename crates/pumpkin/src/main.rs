@@ -72,9 +72,10 @@ async fn main() {
 
     let config = PumpkinConfig::load(&exec_dir);
 
-    let vanilla_data = VanillaData::load();
-
     pumpkin_core::init_logger(&config.advanced);
+
+    // After the logger, so ops, whitelist and ban list loaders can report bad files.
+    let vanilla_data = VanillaData::load();
 
     if let Some(target_arg) = parse_convert_world_arg(std::env::args().skip(1)) {
         let anvil_default = match &config.advanced.world.chunk {
