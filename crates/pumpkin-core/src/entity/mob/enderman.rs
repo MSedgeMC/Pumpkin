@@ -7,7 +7,7 @@ use crate::entity::ai::behavior::hunting::{self, Hunt};
 use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::attributes::Modifier;
 use crate::entity::attributes::ModifierOperation;
-use pumpkin_data::{BlockStateId, attributes::Attributes};
+use pumpkin_data::{Block, BlockStateId, Property, attributes::Attributes};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{
@@ -19,7 +19,7 @@ use pumpkin_data::{
     tag,
     tag::Taggable,
 };
-use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
 use rand::RngExt;
@@ -388,6 +388,74 @@ impl NeutralMob for EndermanEntity {
     }
 }
 
+/// `carriedBlockState` is stored with `BlockState.CODEC`, which writes a bare block name for a
+/// default state and an `id` plus `properties` compound for any other (`Enderman.java:203`).
+fn write_carried_block_state(nbt: &mut NbtCompound, block_state: BlockStateId) {
+    let block = block_state.to_block();
+    // `Block::name` has no namespace, and the block codec only parses namespaced identifiers.
+    let name = if block.name.starts_with("minecraft:") {
+        block.name.to_string()
+    } else {
+        format!("minecraft:{}", block.name)
+    };
+
+    if block.default_state.id == block_state {
+        nbt.put_string("carriedBlockState", name);
+        return;
+    }
+
+    let mut compound = NbtCompound::new();
+    compound.put_string("id", name);
+    if let Some(properties) = block.properties(block_state) {
+        let mut properties_compound = NbtCompound::new();
+        for property in properties.to_props() {
+            properties_compound.put_string(property.key_str(), property.value_str().to_string());
+        }
+        compound.put_compound("properties", properties_compound);
+    }
+    nbt.put_compound("carriedBlockState", compound);
+}
+
+/// Reads the shapes the block state codec accepts, and the integer state id Pumpkin wrote before
+/// it used the vanilla shape. Air reads as no carried block, like vanilla's `.filter(!isAir)`.
+fn read_carried_block_state(nbt: &NbtCompound) -> Option<BlockStateId> {
+    let block_state = match nbt.get("carriedBlockState")? {
+        NbtTag::String(name) => Block::from_name(name).map(|block| block.default_state.id)?,
+        NbtTag::Compound(compound) => {
+            // 26.3 renamed these keys from `Name`/`Properties`; worlds upgraded by vanilla are
+            // rewritten by a data fixer, which Pumpkin does not have.
+            let name = compound
+                .get_string("id")
+                .or_else(|| compound.get_string("Name"))?;
+            let block = Block::from_name(name)?;
+            match compound
+                .get_compound("properties")
+                .or_else(|| compound.get_compound("Properties"))
+            {
+                Some(properties) => read_block_state(block, properties),
+                None => block.default_state.id,
+            }
+        }
+        NbtTag::Int(id) => u16::try_from(*id).ok().and_then(BlockStateId::new)?,
+        _ => return None,
+    };
+
+    (!block_state.to_state().is_air()).then_some(block_state)
+}
+
+/// Unknown, missing or incomplete properties fall back to the default state, matching the lenient
+/// `properties` field of the codec (`StateHolder.java:161`).
+fn read_block_state(block: &'static Block, properties: &NbtCompound) -> BlockStateId {
+    let parsed: Vec<Property> = properties
+        .child_tags
+        .iter()
+        .filter_map(|(key, tag)| Property::from_str_pair(key, tag.extract_string()?))
+        .collect();
+    block
+        .state_from_properties(&parsed)
+        .map_or(block.default_state.id, |state| state.id)
+}
+
 impl Mob for EndermanEntity {
     fn as_neutral(&self) -> Option<&dyn NeutralMob> {
         Some(self)
@@ -395,14 +463,12 @@ impl Mob for EndermanEntity {
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         if let Some(block_state) = self.carried_block.load() {
-            nbt.put_int("carriedBlockState", block_state.as_u16() as i32);
+            write_carried_block_state(nbt, block_state);
         }
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
-        if let Some(block_state) = nbt.get_int("carriedBlockState") {
-            self.set_carried_block(BlockStateId::new(block_state as u16));
-        }
+        self.set_carried_block(read_carried_block_state(nbt));
     }
 
     fn get_mob_entity(&self) -> &MobEntity {
@@ -453,5 +519,111 @@ impl Mob for EndermanEntity {
         if should_teleport {
             self.teleport_randomly();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_carried_block_state, write_carried_block_state};
+    use pumpkin_data::Block;
+    use pumpkin_nbt::compound::NbtCompound;
+
+    #[test]
+    fn carried_block_state_is_written_in_the_vanilla_shape() {
+        // `BlockState.CODEC` on the 26.3 server encodes `minecraft:dandelion` and
+        // `{id: "minecraft:oak_log", properties: {axis: "x"}}` exactly like this.
+        let mut nbt = NbtCompound::new();
+        write_carried_block_state(&mut nbt, Block::DANDELION.default_state.id);
+        assert_eq!(
+            nbt.get_string("carriedBlockState"),
+            Some("minecraft:dandelion")
+        );
+
+        for state in Block::OAK_LOG.states {
+            let mut nbt = NbtCompound::new();
+            write_carried_block_state(&mut nbt, state.id);
+            if state.id == Block::OAK_LOG.default_state.id {
+                assert_eq!(
+                    nbt.get_string("carriedBlockState"),
+                    Some("minecraft:oak_log")
+                );
+            } else {
+                let compound = nbt.get_compound("carriedBlockState").unwrap();
+                assert_eq!(compound.get_string("id"), Some("minecraft:oak_log"));
+                let properties = compound.get_compound("properties").unwrap();
+                assert_eq!(properties.child_tags.len(), 1);
+            }
+            assert_eq!(read_carried_block_state(&nbt), Some(state.id));
+        }
+    }
+
+    #[test]
+    fn carried_block_state_reads_the_shapes_vanilla_and_pumpkin_wrote() {
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("carriedBlockState", "minecraft:dandelion".to_string());
+        assert_eq!(
+            read_carried_block_state(&nbt),
+            Some(Block::DANDELION.default_state.id)
+        );
+
+        let mut compound = NbtCompound::new();
+        compound.put_string("id", "minecraft:oak_log".to_string());
+        let mut properties = NbtCompound::new();
+        properties.put_string("axis", "x".to_string());
+        compound.put_compound("properties", properties);
+        nbt.put_compound("carriedBlockState", compound);
+        let state = read_carried_block_state(&nbt).unwrap();
+        let parsed = Block::OAK_LOG.properties(state).unwrap().to_props();
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|property| (property.key_str(), property.value_str()))
+                .collect::<Vec<_>>(),
+            vec![("axis", "x")]
+        );
+
+        // 26.3 renamed these keys; vanilla upgrades old worlds with a data fixer, Pumpkin does not.
+        let mut legacy = NbtCompound::new();
+        legacy.put_string("Name", "minecraft:dandelion".to_string());
+        legacy.put_compound("Properties", NbtCompound::new());
+        nbt.put_compound("carriedBlockState", legacy);
+        assert_eq!(
+            read_carried_block_state(&nbt),
+            Some(Block::DANDELION.default_state.id)
+        );
+
+        // Pumpkin's own saves held the raw state id before this change.
+        nbt.put_int(
+            "carriedBlockState",
+            i32::from(Block::DANDELION.default_state.id.as_u16()),
+        );
+        assert_eq!(
+            read_carried_block_state(&nbt),
+            Some(Block::DANDELION.default_state.id)
+        );
+
+        // The properties field is lenient, so a value the block does not know falls back to the
+        // default state instead of failing the read.
+        let mut bogus = NbtCompound::new();
+        bogus.put_string("id", "minecraft:oak_log".to_string());
+        let mut bogus_properties = NbtCompound::new();
+        bogus_properties.put_string("axis", "bogus".to_string());
+        bogus.put_compound("properties", bogus_properties);
+        nbt.put_compound("carriedBlockState", bogus);
+        assert_eq!(
+            read_carried_block_state(&nbt),
+            Some(Block::OAK_LOG.default_state.id)
+        );
+
+        // Air is dropped, and so is anything the block registry does not know.
+        for absent in ["minecraft:air", "minecraft:not_a_block"] {
+            nbt.put_string("carriedBlockState", absent.to_string());
+            assert_eq!(read_carried_block_state(&nbt), None);
+        }
+
+        nbt.put_int("carriedBlockState", -1);
+        assert_eq!(read_carried_block_state(&nbt), None);
+
+        assert_eq!(read_carried_block_state(&NbtCompound::new()), None);
     }
 }
