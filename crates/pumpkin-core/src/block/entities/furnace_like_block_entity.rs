@@ -1,3 +1,5 @@
+use std::{collections::HashMap, hash::BuildHasher};
+
 use pumpkin_data::{item_stack::ItemStack, recipes::CookingRecipe};
 
 use crate::block::entities::{BlockEntity, PropertyDelegate};
@@ -32,6 +34,37 @@ pub trait CookingBlockEntityBase:
     fn is_burning(&self) -> bool;
     fn can_accept_recipe_output(&self, recipe: Option<&CookingRecipe>, max_count: u8) -> bool;
     fn craft_recipe(&self, recipe: Option<&CookingRecipe>) -> bool;
+}
+
+/// Experience a single `RecipesUsed` entry is worth, mirroring vanilla
+/// `AbstractFurnaceBlockEntity#createExperience`: the whole part of
+/// `count * experience`, plus one point with the probability of the fraction.
+/// `roll` stands in for vanilla's `level.getRandom().nextFloat()`.
+fn create_experience(count: u32, experience: f32, mut roll: impl FnMut() -> f32) -> i32 {
+    let product = count as f32 * experience;
+    let mut xp_reward = product.floor() as i32;
+    let fraction = product - xp_reward as f32;
+    if fraction != 0.0 && roll() < fraction {
+        xp_reward += 1;
+    }
+    xp_reward
+}
+
+/// Total experience of a `RecipesUsed` map, mirroring vanilla
+/// `AbstractFurnaceBlockEntity#getRecipesToAwardAndPopExperience`: every entry
+/// is rounded on its own, not the sum of all entries.
+#[must_use]
+pub fn extract_experience<S: BuildHasher>(
+    recipes: &HashMap<String, u32, S>,
+    mut roll: impl FnMut() -> f32,
+) -> i32 {
+    recipes
+        .iter()
+        .filter_map(|(recipe_id, count)| {
+            pumpkin_data::recipes::get_recipe_experience(recipe_id)
+                .map(|experience| create_experience(*count, experience, &mut roll))
+        })
+        .sum()
 }
 
 #[macro_export]
@@ -110,20 +143,15 @@ macro_rules! impl_cooking_block_entity_base {
             }
 
             fn extract_experience_from_recipes(&self) -> i32 {
-                // Calculate total XP from tracked recipes and clear the map (vanilla behavior)
+                use $crate::block::entities::furnace_like_block_entity::extract_experience;
+
                 let mut recipes = self
                     .recipes_used
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let mut total_xp: f32 = 0.0;
-                for (recipe_id, count) in recipes.iter() {
-                    // Look up the recipe's XP value
-                    if let Some(xp) = pumpkin_data::recipes::get_recipe_experience(recipe_id) {
-                        total_xp += xp * (*count as f32);
-                    }
-                }
+                let total_xp = extract_experience(&recipes, rand::random::<f32>);
                 recipes.clear();
-                total_xp.floor() as i32
+                total_xp
             }
 
             fn can_accept_recipe_output(
@@ -705,4 +733,25 @@ macro_rules! impl_block_entity_for_cooking {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::extract_experience;
+
+    /// Vanilla rounds each `RecipesUsed` entry on its own, so two entries worth
+    /// 0.7 are awarded as 1 + 1 on a lucky roll (0 + 0 otherwise), never as the
+    /// single point that flooring their 1.4 total would give.
+    #[test]
+    fn experience_is_rounded_per_recipe() {
+        let recipes = HashMap::from([
+            ("minecraft:baked_potato".to_string(), 2),
+            ("minecraft:iron_ingot_from_smelting_iron_ore".to_string(), 1),
+        ]);
+
+        assert_eq!(extract_experience(&recipes, || 0.0), 2);
+        assert_eq!(extract_experience(&recipes, || 1.0), 0);
+    }
 }
