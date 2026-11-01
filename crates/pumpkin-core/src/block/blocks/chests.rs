@@ -285,17 +285,7 @@ fn get_chest_screen_handler_factory(
 }
 
 fn normal_use_chest_impl(args: &NormalUseArgs<'_>) -> BlockActionResult {
-    let stat = if args.block.id == Block::TRAPPED_CHEST.id {
-        pumpkin_data::statistic::CustomStatistic::TriggerTrappedChest
-    } else {
-        pumpkin_data::statistic::CustomStatistic::OpenChest
-    };
-    args.player.increment_stat(
-        pumpkin_data::statistic::StatisticCategory::Custom,
-        stat as i32,
-        1,
-    );
-
+    // Vanilla awards the stat only if a menu provider exists, so a blocked chest does not count.
     if let Some(factory) = get_chest_screen_handler_factory(GetScreenHandlerFactoryArgs {
         server: args.server,
         world: args.world,
@@ -303,6 +293,17 @@ fn normal_use_chest_impl(args: &NormalUseArgs<'_>) -> BlockActionResult {
         position: args.position,
         player: args.player,
     }) {
+        let stat = if args.block.id == Block::TRAPPED_CHEST.id {
+            pumpkin_data::statistic::CustomStatistic::TriggerTrappedChest
+        } else {
+            pumpkin_data::statistic::CustomStatistic::OpenChest
+        };
+        args.player.increment_stat(
+            pumpkin_data::statistic::StatisticCategory::Custom,
+            stat as i32,
+            1,
+        );
+
         args.player
             .open_handled_screen(factory.as_ref(), Some(*args.position));
     }
