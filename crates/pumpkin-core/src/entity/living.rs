@@ -43,7 +43,7 @@ use pumpkin_data::data_component_impl::Operation;
 use pumpkin_data::data_component_impl::food::{ConsumableImpl, ConsumeEffect};
 use pumpkin_data::data_component_impl::{
     AttributeModifiersImpl, BlocksAttacksImpl, DeathProtectionImpl, EnchantmentsImpl,
-    EquipmentSlot, EquippableImpl, FoodImpl, UseRemainderImpl,
+    EquipmentSlot, EquippableImpl, FoodImpl, UseEffectsImpl, UseRemainderImpl,
 };
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
@@ -1410,6 +1410,24 @@ impl LivingEntity {
         succeeded
     }
 
+    /// Mojang name: `removeAllEffects` (`LivingEntity.java:1000-1011`).
+    fn remove_all_effects(&self) -> bool {
+        let effect_types: Vec<&'static StatusEffect> = self
+            .active_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .copied()
+            .collect();
+        if effect_types.is_empty() {
+            return false;
+        }
+        for effect_type in effect_types {
+            self.remove_effect(effect_type);
+        }
+        true
+    }
+
     pub fn has_effect(&self, effect: &'static StatusEffect) -> bool {
         self.active_effects
             .lock()
@@ -2708,95 +2726,128 @@ impl LivingEntity {
         }
     }
 
-    /// Tries to use a totem of undying from the entity's hands. If successful, applies the totem effects and returns true.
-    #[allow(dead_code)]
-    async fn try_use_death_protector(&self, caller: &dyn EntityBase) -> bool {
+    /// Consumes a death protector from the entity's hands. Returns whether one was used, in
+    /// which case the entity survives at 1 health and the death path must be skipped.
+    ///
+    /// Mojang name: `checkTotemDeathProtection` (`LivingEntity.java:1417-1449`). The effect list
+    /// is the `death_effects` of `DeathProtection.TOTEM_OF_UNDYING`
+    /// (`DeathProtection.java:26-36`).
+    fn try_use_death_protector(&self, caller: &dyn EntityBase, damage_type: &DamageType) -> bool {
+        if damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_INVULNERABILITY) {
+            return false;
+        }
+
+        let world = self.entity.world.load();
         for hand in Hand::all() {
             let mut stack = self.get_stack_in_hand(caller, hand);
+            if stack.get_data_component::<DeathProtectionImpl>().is_none() {
+                continue;
+            }
 
-            // Clear the stack and use the totem of undying
-            if stack.get_data_component::<DeathProtectionImpl>().is_some() {
-                let mut resurrect_event =
-                    crate::plugin::api::events::entity::entity_resurrect::EntityResurrectEvent::new(
-                        self.entity.entity_id,
-                    );
-                if let Some(server) = self.entity.world.load().server.upgrade() {
-                    server
-                        .plugin_manager
-                        .fire(&server, &mut resurrect_event)
-                        .await;
-                }
-                if resurrect_event.cancelled {
-                    return false;
-                }
+            let mut resurrect_event =
+                crate::plugin::api::events::entity::entity_resurrect::EntityResurrectEvent::new(
+                    self.entity.entity_id,
+                );
+            if let Some(server) = world.server.upgrade() {
+                server
+                    .plugin_manager
+                    .fire_blocking(&server, &mut resurrect_event);
+            }
+            if resurrect_event.cancelled {
+                return false;
+            }
 
-                let item_key = stack.item.registry_key.to_string();
+            let item_key = stack.item.registry_key.to_string();
+            let item_id = i32::from(stack.item.id);
+            if let Some(player) = caller.get_player() {
+                player.increment_stat(StatisticCategory::Used, item_id, 1);
+                player.trigger_advancement(
+                    crate::entity::player::advancement::trigger::AdvancementTrigger::UsedTotem {
+                        item_id: item_key,
+                    },
+                );
+            }
+
+            // `ItemStack.causeUseVibration`; a totem has no `use_effects` of its own, so the
+            // common `UseEffects.DEFAULT` (interact vibrations on) applies.
+            if stack
+                .get_data_component::<UseEffectsImpl>()
+                .is_none_or(|effects| effects.interact_vibrations)
+            {
+                world.emit_game_event_with_context(
+                    pumpkin_data::game_event::GameEvent::ItemInteractFinish.name(),
+                    self.entity.pos.load(),
+                    &crate::world::game_event::GameEventContext {
+                        source_entity: Some(caller),
+                    },
+                );
+            }
+
+            // Vanilla shrinks the stack instead of clearing it, which only differs for a stacked
+            // death protector.
+            if stack.item_count <= 1 {
                 stack.clear();
+            } else {
+                stack.decrement(1);
+            }
+            if let Some(player) = caller.get_player() {
+                let slot_index = match hand {
+                    Hand::Right => player.inventory.get_selected_slot() as usize,
+                    Hand::Left => PlayerInventory::OFF_HAND_SLOT,
+                };
+                player.inventory.set_stack_in_hand(hand, stack.clone());
+                player.sync_hand_slot(slot_index, stack);
+            } else {
                 let slot = match hand {
                     Hand::Right => EquipmentSlot::MAIN_HAND,
                     Hand::Left => EquipmentSlot::OFF_HAND,
                 };
-                if let Some(player) = caller.get_player() {
-                    player.trigger_advancement(
-                        crate::entity::player::advancement::trigger::AdvancementTrigger::UsedTotem {
-                            item_id: item_key,
-                        },
-                    );
-                    player
-                        .inventory()
-                        .entity_equipment
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .equipment
-                        .insert(slot, stack);
-                } else {
-                    self.entity_equipment
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .equipment
-                        .insert(slot, stack);
-                }
-                self.set_health(1.0);
-                self.entity.world.load().send_entity_status(
-                    &self.entity,
-                    EntityStatus::ProtectedFromDeath,
-                    ActorEventID::InstantDeath,
-                );
-
-                // Set Absorption, Regeneration, and Fire Resistance effects
-                self.add_effect(Effect {
-                    effect_type: &StatusEffect::ABSORPTION,
-                    duration: 100,
-                    amplifier: 1,
-                    ambient: false,
-                    show_particles: true,
-                    show_icon: true,
-                    blend: false,
-                });
-                self.add_effect(Effect {
-                    effect_type: &StatusEffect::REGENERATION,
-                    duration: 900,
-                    amplifier: 1,
-                    ambient: false,
-                    show_particles: true,
-                    show_icon: true,
-                    blend: false,
-                });
-                self.add_effect(Effect {
-                    effect_type: &StatusEffect::FIRE_RESISTANCE,
-                    duration: 800,
-                    amplifier: 0,
-                    ambient: false,
-                    show_particles: true,
-                    show_icon: true,
-                    blend: false,
-                });
-
-                return true;
+                self.entity_equipment
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .equipment
+                    .insert(slot.clone(), stack.clone());
+                self.send_equipment_changes(&[(slot, stack)]);
             }
+
+            self.set_health(1.0);
+            self.apply_death_protection_effects();
+            // Java plays the use sound and particles on the client from entity status 35;
+            // Bedrock's counterpart is the talisman activation actor event.
+            world.send_entity_status(
+                &self.entity,
+                EntityStatus::ProtectedFromDeath,
+                ActorEventID::TalismanActivate,
+            );
+
+            return true;
         }
 
         false
+    }
+
+    /// The `death_effects` of the used death protector.
+    ///
+    /// Mojang name: `DeathProtection#applyEffects` (`DeathProtection.java:38-42`) for
+    /// `DeathProtection.TOTEM_OF_UNDYING` (`DeathProtection.java:26-36`).
+    fn apply_death_protection_effects(&self) {
+        // `ClearAllStatusEffectsConsumeEffect`, then `ApplyStatusEffectsConsumeEffect`.
+        self.remove_all_effects();
+        for (effect_type, duration, amplifier) in [
+            (&StatusEffect::REGENERATION, 900, 1),
+            (&StatusEffect::ABSORPTION, 100, 1),
+            (&StatusEffect::FIRE_RESISTANCE, 800, 0),
+        ] {
+            self.add_effect(Effect {
+                effect_type,
+                duration,
+                amplifier,
+                ambient: false,
+                show_particles: true,
+                show_icon: true,
+                blend: false,
+            });
+        }
     }
 
     #[allow(dead_code)]
@@ -3579,9 +3630,9 @@ impl LivingEntity {
             cause.or(source),
         );
 
-        // These damage types bypass the hurt cooldown and death protection
+        // Vanilla tests `#minecraft:bypasses_cooldown`, which is empty in 26.3
         let bypasses_cooldown_protection =
-            damage_type == DamageType::GENERIC_KILL || damage_type == DamageType::OUT_OF_WORLD;
+            damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_COOLDOWN);
 
         // Apply hurt cooldown logic
         let last_damage = self.last_damage_taken.load();
@@ -3757,17 +3808,21 @@ impl LivingEntity {
         }
 
         if new_health <= 0.0 {
-            let mut death_event =
-                crate::plugin::api::events::entity::entity_death::EntityDeathEvent::new(
-                    self.entity.entity_id,
-                    0,
-                );
-            if let Some(server) = world.server.upgrade() {
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut death_event);
+            // Vanilla checks the death protector before running the death path
+            // (`LivingEntity.java:1277-1285`), so a saved entity fires no death event.
+            if !self.try_use_death_protector(caller, &damage_type) {
+                let mut death_event =
+                    crate::plugin::api::events::entity::entity_death::EntityDeathEvent::new(
+                        self.entity.entity_id,
+                        0,
+                    );
+                if let Some(server) = world.server.upgrade() {
+                    server
+                        .plugin_manager
+                        .fire_blocking(&server, &mut death_event);
+                }
+                self.on_death(damage_type, source, cause);
             }
-            self.on_death(damage_type, source, cause);
         }
 
         true
