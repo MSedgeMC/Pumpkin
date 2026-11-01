@@ -678,7 +678,11 @@ impl ChunkData {
         }
         root_compound.put_list("block_entities", block_entities_list);
 
-        root_compound.put_bool("isLightOn", is_light_correct);
+        // Vanilla stores the flag only when the light is correct
+        // (`SerializableChunkData.java:443-444`), and a missing key reads as false.
+        if is_light_correct {
+            root_compound.put_bool("isLightOn", true);
+        }
         root_compound.put_long(
             "InhabitedTime",
             self.inhabited_time.load(Ordering::Relaxed) as i64,
@@ -1634,6 +1638,38 @@ mod tests {
             panic!("chunk without yPos and without biomes must fail");
         };
         assert!(format!("{error:?}").contains("Missing yPos"));
+    }
+
+    fn read_saved(bytes: &[u8]) -> NbtCompound {
+        let mut cursor = std::io::Cursor::new(bytes);
+        let mut reader = pumpkin_nbt::deserializer::NbtReadHelperJava::new(&mut cursor);
+        pumpkin_nbt::Nbt::read(&mut reader)
+            .expect("saved chunk is NBT")
+            .root_tag
+    }
+
+    #[test]
+    fn is_light_on_is_only_saved_when_the_light_is_correct() {
+        use crate::chunk::ChunkData;
+        use pumpkin_util::math::vector2::Vector2;
+
+        // Vanilla writes the flag with `putBoolean("isLightOn", true)` inside
+        // `if (this.lightCorrect)` (`SerializableChunkData.java:443-444`), so a chunk
+        // whose light was never calculated has no such key at all.
+        let bytes = test_chunk(vec![test_section(0, "minecraft:stone", true)]).write();
+        let chunk = ChunkData::from_bytes(&bytes, Vector2::new(0, 0)).expect("chunk parses");
+        let saved = read_saved(&chunk.to_bytes().expect("chunk saves"));
+        assert!(
+            !saved.has("isLightOn"),
+            "a chunk without correct light must not save isLightOn"
+        );
+
+        let mut lit = test_chunk(vec![test_section(0, "minecraft:stone", true)]);
+        lit.root_tag.put_bool("isLightOn", true);
+        let chunk =
+            ChunkData::from_bytes(&lit.write(), Vector2::new(0, 0)).expect("lit chunk parses");
+        let saved = read_saved(&chunk.to_bytes().expect("lit chunk saves"));
+        assert_eq!(saved.get_bool("isLightOn"), Some(true));
     }
 
     #[test]
