@@ -1,10 +1,14 @@
 use core::f32;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::entity::item::ItemEntity;
 use crate::entity::player::Player;
 use crate::entity::{Entity, EntityBase, living::LivingEntity};
 use pumpkin_data::BlockDirection;
 use pumpkin_data::damage::DamageType;
+use pumpkin_data::data_component_impl::CustomNameImpl;
+use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::painting_variant::PaintingVariant;
@@ -83,6 +87,14 @@ impl PaintingEntity {
             pumpkin_data::tracked_data::painting::DATA_PAINTING_VARIANT_ID,
             VarInt(self.variant_id.load(Ordering::Relaxed) as i32),
         );
+    }
+
+    /// The direction the painting faces, i.e. the axis pointing away from the wall,
+    /// stored as the vanilla 3D direction index.
+    #[must_use]
+    pub fn direction(&self) -> BlockDirection {
+        let index = self.entity.data.load(Ordering::Relaxed) as u8;
+        BlockDirection::from_index(index).unwrap_or(BlockDirection::South)
     }
 
     /// Calculates the exact floating-point center position for a painting of given width and height (in blocks),
@@ -190,20 +202,35 @@ impl PaintingEntity {
     fn drop_and_remove(&self, caused_by: Option<&dyn EntityBase>) {
         let entity = &self.entity;
         let world = entity.world.load();
-        world.play_sound(
-            Sound::EntityPaintingBreak,
-            SoundCategory::Blocks,
-            &entity.pos.load(),
-        );
 
-        let is_creative = caused_by.is_some_and(|c| {
-            c.cast_any()
-                .downcast_ref::<Player>()
-                .is_some_and(Player::is_creative)
-        });
+        // Vanilla `Painting.dropItem` puts the break sound inside the gamerule check too.
+        if world.level_info.load().game_rules.entity_drops {
+            world.play_sound(
+                Sound::EntityPaintingBreak,
+                SoundCategory::Blocks,
+                &entity.pos.load(),
+            );
 
-        if !is_creative {
-            world.drop_stack(&entity.block_pos.load(), ItemStack::new(1, &Item::PAINTING));
+            let is_creative = caused_by.is_some_and(|c| {
+                c.cast_any()
+                    .downcast_ref::<Player>()
+                    .is_some_and(Player::is_creative)
+            });
+
+            if !is_creative {
+                let mut stack = ItemStack::new(1, &Item::PAINTING);
+                if let Some(name) = &**entity.custom_name.load() {
+                    stack.set_data_component(CustomNameImpl { name: name.clone() });
+                }
+                // Vanilla `HangingEntity.spawnAtLocation` drops the item 0.15 blocks in
+                // front of the painting instead of on the wall block.
+                let step = self.direction().to_offset();
+                let pos = entity.pos.load()
+                    + Vector3::new(f64::from(step.x) * 0.15, 0.0, f64::from(step.z) * 0.15);
+                let item_entity =
+                    ItemEntity::new(Entity::new(world.clone(), pos, &EntityType::ITEM), stack);
+                world.spawn_entity(Arc::new(item_entity));
+            }
         }
 
         entity.remove();
@@ -212,9 +239,7 @@ impl PaintingEntity {
 
 impl EntityBase for PaintingEntity {
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
-        let index = self.entity.data.load(Ordering::Relaxed) as u8;
-        let direction = BlockDirection::from_index(index).unwrap_or(BlockDirection::South);
-        nbt.put_byte("facing", facing_to_horizontal(direction) as i8);
+        nbt.put_byte("facing", facing_to_horizontal(self.direction()) as i8);
         let variant_id = self.variant_id.load(Ordering::Relaxed);
         let variant_str =
             self.entity
@@ -282,14 +307,16 @@ impl EntityBase for PaintingEntity {
 
     fn damage_with_context(
         &self,
-        caller: &dyn EntityBase,
+        _caller: &dyn EntityBase,
         _amount: f32,
         _damage_type: DamageType,
         _position: Option<Vector3<f64>>,
-        _source: Option<&dyn EntityBase>,
-        _cause: Option<&dyn EntityBase>,
+        source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
     ) -> bool {
-        self.drop_and_remove(Some(caller));
+        // Vanilla `BlockAttachedEntity.hurtServer` passes `source.getEntity()` to `dropItem`:
+        // the attacker, which a projectile reports through its owner (`cause`).
+        self.drop_and_remove(cause.or(source));
         true
     }
 
