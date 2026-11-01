@@ -4,7 +4,7 @@ use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use std::any::Any;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock, Weak};
 use std::{
     array::from_fn,
     sync::{
@@ -26,6 +26,10 @@ pub struct ChiseledBookshelfBlockEntity {
     pub last_interacted_slot: AtomicI8,
     pub dirty: AtomicBool,
     pub comparator_dirty: AtomicBool,
+    /// Vanilla reads the level off `BlockEntity.level`. Pumpkin only hands it to `tick`.
+    world: OnceLock<Weak<World>>,
+    /// Slot changed by an inventory update before `world` was known, applied by the next tick.
+    pending_state_slot: AtomicI8,
 }
 
 const LAST_INTERACTED_SLOT: &str = "last_interacted_slot";
@@ -39,6 +43,14 @@ impl BlockEntity for ChiseledBookshelfBlockEntity {
         self.position
     }
 
+    fn tick(&self, world: &Arc<World>) {
+        self.world.get_or_init(|| Arc::downgrade(world));
+        let slot = self.pending_state_slot.swap(-1, Ordering::Relaxed);
+        if slot >= 0 {
+            self.update_state_after_inventory_change(slot as usize);
+        }
+    }
+
     fn from_nbt(nbt: &NbtCompound, position: BlockPos) -> Self
     where
         Self: Sized,
@@ -49,6 +61,8 @@ impl BlockEntity for ChiseledBookshelfBlockEntity {
             last_interacted_slot: AtomicI8::new(-1),
             dirty: AtomicBool::new(false),
             comparator_dirty: AtomicBool::new(false),
+            world: OnceLock::new(),
+            pending_state_slot: AtomicI8::new(-1),
         };
         pumpkin_inventory::sync_read_items_from_nbt(
             nbt,
@@ -115,7 +129,28 @@ impl ChiseledBookshelfBlockEntity {
             last_interacted_slot: AtomicI8::new(-1),
             dirty: AtomicBool::new(false),
             comparator_dirty: AtomicBool::new(false),
+            world: OnceLock::new(),
+            pending_state_slot: AtomicI8::new(-1),
         }
+    }
+
+    /// Vanilla `ChiseledBookShelfBlockEntity.updateState` for the paths that only have an
+    /// inventory: `setItem`/`removeItem` end in a state update (server jar :80-101).
+    fn update_state_after_inventory_change(&self, slot: usize) {
+        let Some(world) = self.world.get().and_then(Weak::upgrade) else {
+            self.pending_state_slot.store(slot as i8, Ordering::Relaxed);
+            return;
+        };
+        let (block, state) = world.get_block_and_state(&self.position);
+        // A block entity outlives its block for a tick when another worker replaces it.
+        if block.id != Block::CHISELED_BOOKSHELF.id {
+            return;
+        }
+        self.update_state(
+            ChiseledBookshelfLikeProperties::from_state_id(state.id),
+            &world,
+            slot,
+        );
     }
 
     pub fn update_state(
@@ -129,19 +164,19 @@ impl ChiseledBookshelfBlockEntity {
                 .store(slot as i8, Ordering::Relaxed);
             self.mark_dirty();
 
-            let occupied = !self
-                .items
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)[slot]
-                .is_empty();
-            match slot {
-                0 => properties.slot_0_occupied = occupied,
-                1 => properties.slot_1_occupied = occupied,
-                2 => properties.slot_2_occupied = occupied,
-                3 => properties.slot_3_occupied = occupied,
-                4 => properties.slot_4_occupied = occupied,
-                5 => properties.slot_5_occupied = occupied,
-                _ => {}
+            // Vanilla recomputes every slot, not just the interacted one (server jar :41-45).
+            // Read under the lock and write the state after releasing it.
+            {
+                let items = self
+                    .items
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                properties.slot_0_occupied = !items[0].is_empty();
+                properties.slot_1_occupied = !items[1].is_empty();
+                properties.slot_2_occupied = !items[2].is_empty();
+                properties.slot_3_occupied = !items[3].is_empty();
+                properties.slot_4_occupied = !items[4].is_empty();
+                properties.slot_5_occupied = !items[5].is_empty();
             }
 
             world.set_block_state(
@@ -203,36 +238,56 @@ impl Inventory for ChiseledBookshelfBlockEntity {
     }
 
     fn remove_stack(&self, slot: usize) -> ItemStack {
-        let mut items = self
-            .items
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let removed = std::mem::replace(&mut items[slot], ItemStack::EMPTY.clone());
+        let removed = {
+            let mut items = self
+                .items
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::replace(&mut items[slot], ItemStack::EMPTY.clone())
+        };
         self.mark_dirty();
+        if !removed.is_empty() {
+            self.update_state_after_inventory_change(slot);
+        }
         removed
     }
 
     fn remove_stack_specific(&self, slot: usize, amount: u8) -> ItemStack {
-        let mut items = self
-            .items
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let res = if !items[slot].is_empty() && amount > 0 {
-            items[slot].split(amount)
-        } else {
-            ItemStack::EMPTY.clone()
+        let removed = {
+            let mut items = self
+                .items
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !items[slot].is_empty() && amount > 0 {
+                items[slot].split(amount)
+            } else {
+                ItemStack::EMPTY.clone()
+            }
         };
         self.mark_dirty();
-        res
+        if !removed.is_empty() {
+            self.update_state_after_inventory_change(slot);
+        }
+        removed
     }
 
     fn set_stack(&self, slot: usize, stack: ItemStack) {
-        let mut items = self
-            .items
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        items[slot] = stack;
+        let (was_empty, is_empty) = {
+            let mut items = self
+                .items
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let was_empty = items[slot].is_empty();
+            let is_empty = stack.is_empty();
+            items[slot] = stack;
+            (was_empty, is_empty)
+        };
         self.mark_dirty();
+        // Vanilla `setItem` updates the state for a stored book and for clearing an occupied
+        // slot, but not for an empty stack over an empty slot (server jar :91-101).
+        if !is_empty || !was_empty {
+            self.update_state_after_inventory_change(slot);
+        }
     }
 
     fn mark_dirty(&self) {
@@ -253,5 +308,72 @@ impl Clearable for ChiseledBookshelfBlockEntity {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         items.fill_with(|| ItemStack::EMPTY.clone());
         self.mark_dirty();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+    use pumpkin_data::item::Item;
+    use pumpkin_util::math::vector2::Vector2;
+    use pumpkin_world::chunk::ChunkData;
+
+    fn shelf(world: &Arc<World>, position: &BlockPos) -> Arc<ChiseledBookshelfBlockEntity> {
+        world
+            .level
+            .loaded_chunks
+            .insert(Vector2::new(0, 0), ChunkData::empty_sync(0, 0));
+        world.set_block_state(
+            position,
+            Block::CHISELED_BOOKSHELF.default_state.id,
+            BlockFlags::NOTIFY_LISTENERS | BlockFlags::SKIP_BLOCK_ADDED_CALLBACK,
+        );
+        let bookshelf = Arc::new(ChiseledBookshelfBlockEntity::new(*position));
+        world.add_block_entity(bookshelf.clone());
+        bookshelf
+    }
+
+    fn occupied(world: &Arc<World>, position: &BlockPos) -> ChiseledBookshelfLikeProperties {
+        ChiseledBookshelfLikeProperties::from_state_id(world.get_block_state(position).id)
+    }
+
+    #[tokio::test]
+    async fn inventory_change_updates_the_occupied_slot() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let position = BlockPos::new(0, 64, 0);
+        let bookshelf = shelf(&world, &position);
+        bookshelf.tick(&world);
+
+        // What a hopper moving a book in and back out does (server jar :80-101).
+        bookshelf.set_stack(2, ItemStack::new(1, &Item::BOOK));
+        assert!(occupied(&world, &position).slot_2_occupied);
+        assert!(!occupied(&world, &position).slot_0_occupied);
+        assert_eq!(bookshelf.last_interacted_slot.load(Ordering::Relaxed), 2);
+
+        bookshelf.remove_stack_specific(2, 1);
+        assert!(!occupied(&world, &position).slot_2_occupied);
+
+        world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn inventory_change_before_the_first_tick_reaches_the_block_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let position = BlockPos::new(0, 64, 0);
+        let bookshelf = shelf(&world, &position);
+
+        // A hopper can reach a freshly loaded shelf before its block entity ticks.
+        bookshelf.set_stack(5, ItemStack::new(1, &Item::BOOK));
+        bookshelf.tick(&world);
+        assert!(occupied(&world, &position).slot_5_occupied);
+
+        world.level.shutdown().await;
+        Ok(())
     }
 }
