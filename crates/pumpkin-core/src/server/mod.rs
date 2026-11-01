@@ -460,6 +460,9 @@ impl Server {
 
         info!("All worlds loaded successfully.");
 
+        // `MinecraftServer.loadLevel` re-applies the difficulty after `createLevels`.
+        server.force_difficulty();
+
         let enabled_packs = server.level_info.load().data_packs.enabled.clone();
         server
             .datapack_manager
@@ -977,6 +980,12 @@ impl Server {
                 },
             );
         }
+    }
+
+    /// Applies the configured difficulty ignoring the lock, like `DedicatedServer.forceDifficulty`
+    /// on startup; `set_difficulty` pins hardcore levels to Hard.
+    fn force_difficulty(&self) {
+        self.set_difficulty(self.basic_config.default_difficulty, true);
     }
 
     /// Sets the difficulty lock status of the server and broadcasts the update to all players.
