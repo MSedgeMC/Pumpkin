@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
+use tracing::error;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PermissionCacheEntry {
@@ -18,8 +19,24 @@ pub struct PermissionCache {
 impl PermissionCache {
     pub async fn load(path: &Path) -> Self {
         fs::read_to_string(path).await.map_or_else(
-            |_| Self::default(),
-            |data| serde_json::from_str(&data).unwrap_or_default(),
+            |error| {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    error!(
+                        "Couldn't read permission cache at {}: {error}",
+                        path.display()
+                    );
+                }
+                Self::default()
+            },
+            |data| {
+                serde_json::from_str(&data).unwrap_or_else(|error| {
+                    error!(
+                        "Couldn't parse permission cache at {}. Reason: {error}. Falling back to default.",
+                        path.display()
+                    );
+                    Self::default()
+                })
+            },
         )
     }
 

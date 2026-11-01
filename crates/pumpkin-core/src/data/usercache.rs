@@ -5,7 +5,7 @@ use std::{env, fs};
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
-use tracing::warn;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 const USER_CACHE_PATH: &str = "usercache.json";
@@ -160,15 +160,37 @@ impl UserCache {
 
     fn load_entries() -> Vec<UserCacheEntry> {
         let path = Self::path();
-        let Ok(raw) = fs::read_to_string(path) else {
+        if !path.exists() {
             return Vec::new();
+        }
+
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(error) => {
+                error!(
+                    "Couldn't read user cache file at {}: {error}",
+                    path.display()
+                );
+                return Vec::new();
+            }
         };
 
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            return Vec::new();
+        let json = match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(json) => json,
+            Err(error) => {
+                error!(
+                    "Couldn't parse user cache file at {}. Reason: {error}. Falling back to default.",
+                    path.display()
+                );
+                return Vec::new();
+            }
         };
 
         let Some(array) = json.as_array() else {
+            error!(
+                "Couldn't parse user cache file at {}. Reason: expected a JSON array. Falling back to default.",
+                path.display()
+            );
             return Vec::new();
         };
 
