@@ -71,8 +71,8 @@ impl BlockEntity for JukeboxBlockEntity {
             nbt.put(RECORD_ITEM_NBT_KEY, record_nbt);
         }
 
-        let ticks = self.ticks_since_song_started.load(Ordering::Relaxed);
-        if ticks > 0 {
+        if self.has_active_song() {
+            let ticks = self.ticks_since_song_started.load(Ordering::Relaxed);
             nbt.put_long(TICKS_SINCE_SONG_STARTED_NBT_KEY, ticks as i64);
         }
     }
@@ -120,10 +120,12 @@ impl BlockEntity for JukeboxBlockEntity {
             record.write_item_stack(&mut record_nbt);
             nbt.put("RecordItem", NbtTag::Compound(record_nbt));
         }
-        nbt.put_long(
-            "ticks_since_song_started",
-            self.ticks_since_song_started.load(Ordering::Relaxed) as i64,
-        );
+        if self.has_active_song() {
+            nbt.put_long(
+                TICKS_SINCE_SONG_STARTED_NBT_KEY,
+                self.ticks_since_song_started.load(Ordering::Relaxed) as i64,
+            );
+        }
         Some(nbt)
     }
 
@@ -215,6 +217,11 @@ impl JukeboxBlockEntity {
             );
         }
         self.mark_dirty();
+    }
+
+    /// Vanilla's `JukeboxSongPlayer#getSong() != null`: set for the whole song, tick 0 included.
+    fn has_active_song(&self) -> bool {
+        self.song_length_ticks.load(Ordering::Relaxed) != 0
     }
 
     /// Check if a song is currently playing
@@ -328,6 +335,31 @@ mod tests {
         jukebox.remove_stack(0);
         assert!(!allay.is_dancing());
         world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[test]
+    fn saved_ticks_keep_tick_zero_and_go_away_with_the_song()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let jukebox = JukeboxBlockEntity::new(BlockPos::new(0, 64, 0));
+
+        jukebox.start_playing(100);
+        let mut nbt = NbtCompound::new();
+        jukebox.write_nbt(&mut nbt);
+        assert_eq!(nbt.get_long(TICKS_SINCE_SONG_STARTED_NBT_KEY), Some(0));
+
+        jukebox.stop_playing();
+        let mut nbt = NbtCompound::new();
+        jukebox.write_nbt(&mut nbt);
+        assert_eq!(nbt.get_long(TICKS_SINCE_SONG_STARTED_NBT_KEY), None);
+        Ok(())
+    }
+
+    #[test]
+    fn chunk_data_has_no_ticks_without_a_song() -> Result<(), Box<dyn std::error::Error>> {
+        let jukebox = JukeboxBlockEntity::new(BlockPos::new(0, 64, 0));
+        let nbt = jukebox.chunk_data_nbt().ok_or("jukebox has no chunk nbt")?;
+        assert_eq!(nbt.get_long(TICKS_SINCE_SONG_STARTED_NBT_KEY), None);
         Ok(())
     }
 }
