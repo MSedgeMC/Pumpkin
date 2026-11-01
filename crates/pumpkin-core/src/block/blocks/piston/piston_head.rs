@@ -53,9 +53,8 @@ impl BlockBehaviour for PistonHeadBlock {
     }
 
     fn on_state_replaced(&self, args: OnStateReplacedArgs<'_>) {
-        if args.moved {
-            return;
-        }
+        // Vanilla's `affectNeighborsAfterRemoval` ignores `movedByPiston`: a head that is
+        // moved away still destroys the base it leaves behind.
         let props = PistonHeadProperties::from_state_id(args.old_state_id);
         let base_pos = args
             .position
