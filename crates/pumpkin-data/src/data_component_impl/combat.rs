@@ -1371,3 +1371,25 @@ impl Hash for DamageTypeImpl {
         self.damage_type.id.hash(state);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DamageTypeImpl, DataComponentImpl};
+    use crate::damage::DamageType;
+
+    /// Vanilla's `minecraft:damage_type` codec is a registry holder codec, so the
+    /// component stores the registry key, not the death-message id.
+    #[test]
+    fn damage_type_component_serialises_the_registry_key() {
+        for (damage_type, key) in [
+            (DamageType::ENDER_PEARL, "minecraft:ender_pearl"),
+            (DamageType::CAMPFIRE, "minecraft:campfire"),
+        ] {
+            let component = DamageTypeImpl { damage_type };
+            let encoded = component.write_data();
+
+            assert_eq!(encoded.extract_string(), Some(key));
+            assert_eq!(DamageTypeImpl::read_data(&encoded), Some(component));
+        }
+    }
+}

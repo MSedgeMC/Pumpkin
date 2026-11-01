@@ -140,7 +140,11 @@ pub type DamageTypeRegistry = HashMap<String, DamageTypeEntry>;
 
 /// Encodes a `DamageTypeDefinition` into a `pumpkin_data::damage::DamageType`.
 #[must_use]
-pub fn to_damage_type(numeric_id: u8, def: &DamageTypeDefinition) -> DamageType {
+pub fn to_damage_type(
+    numeric_id: u8,
+    registry_key: &str,
+    def: &DamageTypeDefinition,
+) -> DamageType {
     DamageType {
         death_message_type: def
             .death_message_type
@@ -148,6 +152,7 @@ pub fn to_damage_type(numeric_id: u8, def: &DamageTypeDefinition) -> DamageType 
         exhaustion: def.exhaustion,
         effects: def.effects.map(Into::into),
         message_id: Box::leak(def.message_id.clone().into_boxed_str()),
+        registry_key: Box::leak(registry_key.to_string().into_boxed_str()),
         scaling: def.scaling.into(),
         id: numeric_id,
     }
@@ -258,7 +263,7 @@ mod tests {
             Some(DeathMessageTypeWrapper::IntentionalGameDesign)
         );
 
-        let dt = to_damage_type(52, &def);
+        let dt = to_damage_type(52, "custom:bleed", &def);
         assert_eq!(dt.id, 52);
         assert_eq!(dt.message_id, "bleed");
         assert_eq!(dt.scaling, DamageScaling::WhenCausedByLivingNonPlayer);
@@ -283,7 +288,7 @@ mod tests {
         assert_eq!(def.effects, None);
         assert_eq!(def.death_message_type, None);
 
-        let dt = to_damage_type(51, &def);
+        let dt = to_damage_type(51, "custom:simple", &def);
         assert_eq!(dt.id, 51);
         assert_eq!(dt.message_id, "simple");
         assert_eq!(dt.scaling, DamageScaling::Never);
@@ -380,7 +385,7 @@ mod tests {
             id: "custom:bleed".to_string(),
             numeric_id: 51,
             definition: bleed_def.clone(),
-            damage_type: to_damage_type(51, &bleed_def),
+            damage_type: to_damage_type(51, "custom:bleed", &bleed_def),
             nbt_data: vec![7, 8, 9].into_boxed_slice(),
         };
         custom.insert("custom:bleed".to_string(), bleed_entry);
@@ -397,7 +402,7 @@ mod tests {
             id: "minecraft:arrow".to_string(),
             numeric_id: 0,
             definition: arrow_def.clone(),
-            damage_type: to_damage_type(0, &arrow_def),
+            damage_type: to_damage_type(0, "minecraft:arrow", &arrow_def),
             nbt_data: vec![99, 99].into_boxed_slice(),
         };
         custom.insert("minecraft:arrow".to_string(), arrow_override);

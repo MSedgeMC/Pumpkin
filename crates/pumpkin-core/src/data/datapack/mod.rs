@@ -1484,7 +1484,7 @@ fn build_damage_type_registry(
                 |vanilla_dt| vanilla_dt.id,
             );
 
-        let dt = damage_type_loader::to_damage_type(numeric_id, &def);
+        let dt = damage_type_loader::to_damage_type(numeric_id, &id, &def);
         let nbt_data = damage_type_loader::to_registry_nbt_bytes(&def);
         let leaked_dt = Box::leak(Box::new(dt));
         static_map.insert(id.clone(), leaked_dt);
