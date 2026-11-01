@@ -66,7 +66,8 @@ impl PistonBlock {
         }
         match state.piston_behavior {
             pumpkin_data::block_state::PistonBehavior::Destroy => return can_break,
-            pumpkin_data::block_state::PistonBehavior::Block => return false,
+            pumpkin_data::block_state::PistonBehavior::Block
+            | pumpkin_data::block_state::PistonBehavior::Ignore => return false,
             pumpkin_data::block_state::PistonBehavior::PushOnly => return dir == piston_dir,
             _ => {}
         }
@@ -510,4 +511,33 @@ fn move_piston(
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn immoveable_blocks_cannot_be_pushed() {
+        let dir = BlockDirection::North;
+        for block in [
+            &Block::PISTON_HEAD,
+            &Block::ANVIL,
+            &Block::GRINDSTONE,
+            &Block::LODESTONE,
+        ] {
+            assert!(
+                !PistonBlock::is_movable(block, block.default_state, dir, true, dir),
+                "{} has push reaction IMMOVEABLE in vanilla",
+                block.name
+            );
+        }
+        assert!(PistonBlock::is_movable(
+            &Block::STONE,
+            Block::STONE.default_state,
+            dir,
+            false,
+            dir
+        ));
+    }
 }
